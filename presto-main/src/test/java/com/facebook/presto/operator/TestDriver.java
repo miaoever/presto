@@ -31,6 +31,7 @@ import com.facebook.presto.spi.HostAddress;
 import com.facebook.presto.spi.NodeProvider;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.TableHandle;
+import com.facebook.presto.spi.UpdatablePageSource;
 import com.facebook.presto.spi.plan.AggregationNode;
 import com.facebook.presto.spi.plan.PlanNodeId;
 import com.facebook.presto.spi.plan.TableScanNode;
@@ -68,6 +69,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import static com.facebook.airlift.concurrent.Threads.daemonThreadsNamed;
 import static com.facebook.presto.RowPagesBuilder.rowPagesBuilder;
@@ -418,6 +420,29 @@ public class TestDriver
     }
 
     @Test
+    public void testAddWrapperSourceOperatorFinish()
+    {
+        PlanNodeId sourceId = new PlanNodeId("source");
+        final List<Type> types = ImmutableList.of();
+        MockWrapperSourceOperator source = new MockWrapperSourceOperator(driverContext.addOperatorContext(99, sourceId, "values"));
+
+        PageConsumerOperator sink = createSinkOperator(driverContext, types);
+        Driver driver = Driver.createDriver(driverContext, source, sink);
+
+        assertSame(driver.getDriverContext(), driverContext);
+        assertFalse(driver.isFinished());
+
+        driver.updateSource(new TaskSource(sourceId, ImmutableSet.of(new ScheduledSplit(0, sourceId, newMockSplit())), true));
+
+        assertFalse(driver.isFinished());
+        assertTrue(driver.processFor(new Duration(1, TimeUnit.MILLISECONDS)).isDone());
+        assertTrue(driver.isFinished());
+
+        assertTrue(sink.isFinished());
+        assertTrue(source.isFinished());
+    }
+
+    @Test
     public void testFragmentResultCache()
     {
         processSourceDriver(driverContextWithFragmentResultCacheContext);
@@ -688,6 +713,91 @@ public class TestDriver
                 return Optional.of(cache.get(key).iterator());
             }
             return Optional.empty();
+        }
+    }
+
+    private static class MockWrapperSourceOperator
+            implements SourceOperator, WrapperSourceOperator
+    {
+        private final OperatorContext operatorContext;
+        private final PlanNodeId sourceId;
+        private boolean isFinished;
+
+        private MockWrapperSourceOperator(OperatorContext operatorContext)
+        {
+            this.operatorContext = operatorContext;
+            this.sourceId = operatorContext.getPlanNodeId();
+        }
+
+        @Override
+        public PlanNodeId getSourceId()
+        {
+            return sourceId;
+        }
+
+        @Override
+        public Supplier<Optional<UpdatablePageSource>> addSplit(Split split)
+        {
+            fail("addSplit shouldn't be called in WrapperSourceOperator.");
+            return Optional::empty;
+        }
+
+        @Override
+        public void noMoreSplits()
+        {
+        }
+
+        @Override
+        public Supplier<Optional<UpdatablePageSource>> addSplit(ScheduledSplit split)
+        {
+            finish();
+            return Optional::empty;
+        }
+
+        @Override
+        public OperatorContext getOperatorContext()
+        {
+            return operatorContext;
+        }
+
+        @Override
+        public void finish()
+        {
+            isFinished = true;
+        }
+
+        @Override
+        public boolean isFinished()
+        {
+            return isFinished;
+        }
+
+        @Override
+        public ListenableFuture<?> isBlocked()
+        {
+            return NOT_BLOCKED;
+        }
+
+        @Override
+        public boolean needsInput()
+        {
+            return false;
+        }
+
+        @Override
+        public void addInput(Page page)
+        {
+        }
+
+        @Override
+        public Page getOutput()
+        {
+            return null;
+        }
+
+        @Override
+        public void close()
+        {
         }
     }
 }
