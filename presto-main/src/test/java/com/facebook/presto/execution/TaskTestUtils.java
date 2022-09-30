@@ -189,7 +189,10 @@ public final class TaskTestUtils
                 new ObjectMapper(),
                 (session) -> {
                     throw new UnsupportedOperationException();
-                });
+                },
+                jsonCodec(TaskSource.class),
+                jsonCodec(TableWriteInfo.class),
+                jsonCodec(PlanFragment.class));
     }
 
     public static TaskInfo updateTask(SqlTask sqlTask, List<TaskSource> taskSources, OutputBuffers outputBuffers)
