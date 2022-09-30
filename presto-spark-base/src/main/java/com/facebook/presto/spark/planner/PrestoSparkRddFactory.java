@@ -44,6 +44,7 @@ import com.facebook.presto.sql.planner.PartitioningHandle;
 import com.facebook.presto.sql.planner.PartitioningProviderManager;
 import com.facebook.presto.sql.planner.PlanFragment;
 import com.facebook.presto.sql.planner.SplitSourceFactory;
+import com.facebook.presto.sql.planner.plan.NativeExecutionNode;
 import com.facebook.presto.sql.planner.plan.PlanFragmentId;
 import com.facebook.presto.sql.planner.plan.RemoteSourceNode;
 import com.google.common.collect.ArrayListMultimap;
@@ -69,6 +70,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+import static com.facebook.presto.SystemSessionProperties.isNativeExecutionEnabled;
 import static com.facebook.presto.spark.util.PrestoSparkUtils.classTag;
 import static com.facebook.presto.spark.util.PrestoSparkUtils.serializeZstdCompressed;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
@@ -220,7 +222,8 @@ public class PrestoSparkRddFactory
                 outputType);
 
         Optional<PrestoSparkTaskSourceRdd> taskSourceRdd;
-        List<TableScanNode> tableScans = findTableScanNodes(fragment.getRoot());
+        Optional<NativeExecutionNode> nativeExecutionNode = findNativeExecutionNodes(fragment.getRoot());
+        List<TableScanNode> tableScans = findAllTableScanNodes(fragment.getRoot());
         if (!tableScans.isEmpty()) {
             try (CloseableSplitSourceProvider splitSourceProvider = new CloseableSplitSourceProvider(splitManager::getSplits)) {
                 SplitSourceFactory splitSourceFactory = new SplitSourceFactory(splitSourceProvider, WarningCollector.NOOP);
@@ -232,7 +235,8 @@ public class PrestoSparkRddFactory
                         fragment.getPartitioning(),
                         tableScans,
                         splitSources,
-                        numberOfShufflePartitions));
+                        numberOfShufflePartitions,
+                        nativeExecutionNode));
             }
         }
         else if (rddInputs.size() == 0) {
@@ -262,9 +266,13 @@ public class PrestoSparkRddFactory
             PartitioningHandle partitioning,
             List<TableScanNode> tableScans,
             Map<PlanNodeId, SplitSource> splitSources,
-            Optional<Integer> numberOfShufflePartitions)
+            Optional<Integer> numberOfShufflePartitions,
+            Optional<NativeExecutionNode> nativeExecution)
     {
         ListMultimap<Integer, SerializedPrestoSparkTaskSource> taskSourcesMap = ArrayListMultimap.create();
+        boolean nativeExecutionEnabled = isNativeExecutionEnabled(session);
+        checkArgument(nativeExecutionEnabled == nativeExecution.isPresent(),
+                "Can't find the NativeExecutionNode in when native engine execution is enabled");
         for (TableScanNode tableScan : tableScans) {
             int totalNumberOfSplits = 0;
             SplitSource splitSource = requireNonNull(splitSources.get(tableScan.getId()), "split source is missing for table scan node with id: " + tableScan.getId());
@@ -277,7 +285,8 @@ public class PrestoSparkRddFactory
                     int numberOfSplitsInCurrentBatch = batch.get().size();
                     log.info("Found %s splits for table scan node with id %s", numberOfSplitsInCurrentBatch, tableScan.getId());
                     totalNumberOfSplits += numberOfSplitsInCurrentBatch;
-                    taskSourcesMap.putAll(createTaskSources(tableScan.getId(), batch.get()));
+                    PlanNodeId sourceNodeId = nativeExecutionEnabled ? nativeExecution.get().getId() : tableScan.getId();
+                    taskSourcesMap.putAll(createTaskSources(sourceNodeId, batch.get()));
                 }
             }
             log.info("Total number of splits for table scan node with id %s: %s", tableScan.getId(), totalNumberOfSplits);
@@ -326,24 +335,49 @@ public class PrestoSparkRddFactory
         return PrestoSparkPartitionedSplitAssigner.create(session, tableScanNodeId, splitSource, fragmentPartitioning, partitioningProviderManager);
     }
 
-    private ListMultimap<Integer, SerializedPrestoSparkTaskSource> createTaskSources(PlanNodeId tableScanId, SetMultimap<Integer, ScheduledSplit> assignedSplits)
+    private ListMultimap<Integer, SerializedPrestoSparkTaskSource> createTaskSources(PlanNodeId sourceNodeId, SetMultimap<Integer, ScheduledSplit> assignedSplits)
     {
         ListMultimap<Integer, SerializedPrestoSparkTaskSource> result = ArrayListMultimap.create();
         for (int partitionId : ImmutableSet.copyOf(assignedSplits.keySet())) {
             // remove the entry from the collection to let GC reclaim the memory
             Set<ScheduledSplit> splits = assignedSplits.removeAll(partitionId);
-            TaskSource taskSource = new TaskSource(tableScanId, splits, true);
+            TaskSource taskSource = new TaskSource(sourceNodeId, splits, true);
             SerializedPrestoSparkTaskSource serializedTaskSource = new SerializedPrestoSparkTaskSource(serializeZstdCompressed(taskSourceCodec, taskSource));
             result.put(partitionId, serializedTaskSource);
         }
         return result;
     }
 
-    private static List<TableScanNode> findTableScanNodes(PlanNode node)
+    private static <T extends PlanNode> List<T> findAllPlanNodes(PlanNode node, Class<?> clazz)
     {
         return searchFrom(node)
-                .where(TableScanNode.class::isInstance)
+                .where(clazz::isInstance)
                 .findAll();
+    }
+
+    private static <T extends PlanNode> Optional<T> findFirstPlanNode(PlanNode node, Class<?> clazz)
+    {
+        return searchFrom(node)
+                .where(clazz::isInstance)
+                .findFirst();
+    }
+
+    private static List<TableScanNode> findTableScanNodes(PlanNode node)
+    {
+        return findAllPlanNodes(node, TableScanNode.class);
+    }
+
+    private static <T extends PlanNode> Optional<T> findNativeExecutionNodes(PlanNode node)
+    {
+        return findFirstPlanNode(node, NativeExecutionNode.class);
+    }
+
+    private static List<TableScanNode> findAllTableScanNodes(PlanNode node)
+    {
+        ImmutableList.Builder<TableScanNode> builder = ImmutableList.builder();
+        findAllPlanNodes(node, NativeExecutionNode.class).forEach(plan -> builder.addAll(findTableScanNodes(((NativeExecutionNode) plan).getSubPlan())));
+        builder.addAll(findTableScanNodes(node));
+        return builder.build();
     }
 
     private static Map<String, Broadcast<?>> toTaskProcessorBroadcastInputs(Map<PlanFragmentId, Broadcast<?>> broadcastInputs)

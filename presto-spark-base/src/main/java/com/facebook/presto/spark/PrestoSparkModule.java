@@ -61,6 +61,7 @@ import com.facebook.presto.execution.resourceGroups.InternalResourceGroupManager
 import com.facebook.presto.execution.resourceGroups.LegacyResourceGroupConfigurationManager;
 import com.facebook.presto.execution.resourceGroups.ResourceGroupManager;
 import com.facebook.presto.execution.scheduler.NodeSchedulerConfig;
+import com.facebook.presto.execution.scheduler.TableWriteInfo;
 import com.facebook.presto.execution.scheduler.nodeSelection.SimpleTtlNodeSelectorConfig;
 import com.facebook.presto.execution.warnings.WarningCollectorConfig;
 import com.facebook.presto.index.IndexManager;
@@ -104,12 +105,8 @@ import com.facebook.presto.server.PluginManagerConfig;
 import com.facebook.presto.server.QuerySessionSupplier;
 import com.facebook.presto.server.ServerConfig;
 import com.facebook.presto.server.SessionPropertyDefaults;
-import com.facebook.presto.server.TaskUpdateRequest;
-import com.facebook.presto.server.remotetask.RemoteTaskStats;
 import com.facebook.presto.server.security.ServerSecurityModule;
 import com.facebook.presto.spark.classloader_interface.SparkProcessType;
-import com.facebook.presto.spark.execution.ForNativeExecutionTask;
-import com.facebook.presto.spark.execution.NativeExecutionTaskFactory;
 import com.facebook.presto.spark.execution.PrestoSparkBroadcastTableCacheManager;
 import com.facebook.presto.spark.execution.PrestoSparkExecutionExceptionFactory;
 import com.facebook.presto.spark.execution.PrestoSparkTaskExecutorFactory;
@@ -183,7 +180,6 @@ import com.google.inject.Binder;
 import com.google.inject.Provides;
 import com.google.inject.Scopes;
 import com.google.inject.TypeLiteral;
-import io.airlift.units.Duration;
 import org.weakref.jmx.MBeanExporter;
 import org.weakref.jmx.testing.TestingMBeanServer;
 
@@ -197,7 +193,6 @@ import java.util.concurrent.ScheduledExecutorService;
 
 import static com.facebook.airlift.concurrent.Threads.daemonThreadsNamed;
 import static com.facebook.airlift.configuration.ConfigBinder.configBinder;
-import static com.facebook.airlift.http.client.HttpClientBinder.httpClientBinder;
 import static com.facebook.airlift.json.JsonBinder.jsonBinder;
 import static com.facebook.airlift.json.JsonCodecBinder.jsonCodecBinder;
 import static com.facebook.airlift.json.smile.SmileCodecBinder.smileCodecBinder;
@@ -207,7 +202,6 @@ import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static java.util.concurrent.Executors.newScheduledThreadPool;
-import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.weakref.jmx.guice.ExportBinder.newExporter;
 
 public class PrestoSparkModule
@@ -260,7 +254,7 @@ public class PrestoSparkModule
         jsonCodecBinder(binder).bindJsonCodec(PrestoSparkQueryStatusInfo.class);
         jsonCodecBinder(binder).bindJsonCodec(PrestoSparkQueryData.class);
         jsonCodecBinder(binder).bindListJsonCodec(TaskMemoryReservationSummary.class);
-        jsonCodecBinder(binder).bindJsonCodec(TaskUpdateRequest.class);
+        jsonCodecBinder(binder).bindJsonCodec(TableWriteInfo.class);
 
         // smile codecs
         smileCodecBinder(binder).bindSmileCodec(TaskSource.class);
@@ -469,15 +463,6 @@ public class PrestoSparkModule
 
         // TODO: Decouple and remove: required by PluginManager
         install(new ServerSecurityModule());
-
-        binder.bind(RemoteTaskStats.class).in(Scopes.SINGLETON);
-        newExporter(binder).export(RemoteTaskStats.class).withGeneratedName();
-        binder.bind(NativeExecutionTaskFactory.class).in(Scopes.SINGLETON);
-        httpClientBinder(binder).bindHttpClient("nativeExecution", ForNativeExecutionTask.class)
-                .withConfigDefaults(config -> {
-                    config.setRequestTimeout(new Duration(10, SECONDS));
-                    config.setMaxConnectionsPerServer(250);
-                });
 
         // spark specific
         binder.bind(SparkProcessType.class).toInstance(sparkProcessType);

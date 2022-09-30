@@ -31,6 +31,7 @@ import com.facebook.presto.execution.FragmentResultCacheContext;
 import com.facebook.presto.execution.StageExecutionId;
 import com.facebook.presto.execution.TaskManagerConfig;
 import com.facebook.presto.execution.TaskMetadataContext;
+import com.facebook.presto.execution.TaskSource;
 import com.facebook.presto.execution.buffer.OutputBuffer;
 import com.facebook.presto.execution.buffer.PagesSerdeFactory;
 import com.facebook.presto.execution.scheduler.ExecutionWriterTarget;
@@ -74,6 +75,7 @@ import com.facebook.presto.operator.LookupOuterOperator.LookupOuterOperatorFacto
 import com.facebook.presto.operator.LookupSourceFactory;
 import com.facebook.presto.operator.MarkDistinctOperator.MarkDistinctOperatorFactory;
 import com.facebook.presto.operator.MetadataDeleteOperator.MetadataDeleteOperatorFactory;
+import com.facebook.presto.operator.NativeExecutionOperator;
 import com.facebook.presto.operator.NestedLoopJoinBridge;
 import com.facebook.presto.operator.NestedLoopJoinPagesSupplier;
 import com.facebook.presto.operator.OperatorFactory;
@@ -188,6 +190,7 @@ import com.facebook.presto.sql.planner.plan.IndexSourceNode;
 import com.facebook.presto.sql.planner.plan.InternalPlanVisitor;
 import com.facebook.presto.sql.planner.plan.JoinNode;
 import com.facebook.presto.sql.planner.plan.MetadataDeleteNode;
+import com.facebook.presto.sql.planner.plan.NativeExecutionNode;
 import com.facebook.presto.sql.planner.plan.OutputNode;
 import com.facebook.presto.sql.planner.plan.RemoteSourceNode;
 import com.facebook.presto.sql.planner.plan.RowNumberNode;
@@ -373,6 +376,10 @@ public class LocalExecutionPlanner
     private final boolean tableFinishOperatorMemoryTrackingEnabled;
     private final StandaloneSpillerFactory standaloneSpillerFactory;
 
+    private final JsonCodec<TaskSource> taskSourceCodec;
+    private final JsonCodec<PlanFragment> planFragmentCodec;
+    private final JsonCodec<TableWriteInfo> tableWriteInfoCodec;
+
     private static final TypeSignature SPHERICAL_GEOGRAPHY_TYPE_SIGNATURE = parseTypeSignature("SphericalGeography");
 
     @Inject
@@ -403,7 +410,10 @@ public class LocalExecutionPlanner
             DeterminismEvaluator determinismEvaluator,
             FragmentResultCacheManager fragmentResultCacheManager,
             ObjectMapper objectMapper,
-            StandaloneSpillerFactory standaloneSpillerFactory)
+            StandaloneSpillerFactory standaloneSpillerFactory,
+            JsonCodec<TaskSource> taskSourceCodec,
+            JsonCodec<TableWriteInfo> tableWriteInfoCodec,
+            JsonCodec<PlanFragment> planFragmentCodec)
     {
         this.explainAnalyzeContext = requireNonNull(explainAnalyzeContext, "explainAnalyzeContext is null");
         this.pageSourceProvider = requireNonNull(pageSourceProvider, "pageSourceProvider is null");
@@ -438,25 +448,22 @@ public class LocalExecutionPlanner
         this.objectMapper = requireNonNull(objectMapper, "objectMapper is null");
         this.tableFinishOperatorMemoryTrackingEnabled = requireNonNull(memoryManagerConfig, "memoryManagerConfig is null").isTableFinishOperatorMemoryTrackingEnabled();
         this.standaloneSpillerFactory = requireNonNull(standaloneSpillerFactory, "standaloneSpillerFactory is null");
+        this.taskSourceCodec = requireNonNull(taskSourceCodec, "taskSourceCodec is null");
+        this.tableWriteInfoCodec = requireNonNull(tableWriteInfoCodec, "tableWriteInfoCodec is null");
+        this.planFragmentCodec = requireNonNull(planFragmentCodec, "planFragmentCodec is null");
     }
 
     public LocalExecutionPlan plan(
             TaskContext taskContext,
-            PlanNode plan,
-            PartitioningScheme partitioningScheme,
-            StageExecutionDescriptor stageExecutionDescriptor,
-            List<PlanNodeId> partitionedSourceOrder,
+            PlanFragment planFragment,
             OutputBuffer outputBuffer,
             RemoteSourceFactory remoteSourceFactory,
             TableWriteInfo tableWriteInfo)
     {
         return plan(
                 taskContext,
-                plan,
-                partitioningScheme,
-                stageExecutionDescriptor,
-                partitionedSourceOrder,
-                createOutputFactory(taskContext, partitioningScheme, outputBuffer),
+                planFragment,
+                createOutputFactory(taskContext, planFragment.getPartitioningScheme(), outputBuffer),
                 remoteSourceFactory,
                 tableWriteInfo,
                 false);
@@ -464,10 +471,7 @@ public class LocalExecutionPlanner
 
     public LocalExecutionPlan plan(
             TaskContext taskContext,
-            PlanNode plan,
-            PartitioningScheme partitioningScheme,
-            StageExecutionDescriptor stageExecutionDescriptor,
-            List<PlanNodeId> partitionedSourceOrder,
+            PlanFragment planFragment,
             OutputFactory outputFactory,
             RemoteSourceFactory remoteSourceFactory,
             TableWriteInfo tableWriteInfo,
@@ -475,12 +479,9 @@ public class LocalExecutionPlanner
     {
         return plan(
                 taskContext,
-                stageExecutionDescriptor,
-                plan,
-                partitioningScheme,
-                partitionedSourceOrder,
+                planFragment,
                 outputFactory,
-                createOutputPartitioning(taskContext, partitioningScheme),
+                createOutputPartitioning(taskContext, planFragment.getPartitioningScheme()),
                 remoteSourceFactory,
                 tableWriteInfo,
                 pageSinkCommitRequired);
@@ -566,20 +567,20 @@ public class LocalExecutionPlanner
     @VisibleForTesting
     public LocalExecutionPlan plan(
             TaskContext taskContext,
-            StageExecutionDescriptor stageExecutionDescriptor,
-            PlanNode plan,
-            PartitioningScheme partitioningScheme,
-            List<PlanNodeId> partitionedSourceOrder,
+            PlanFragment planFragment,
             OutputFactory outputOperatorFactory,
             Optional<OutputPartitioning> outputPartitioning,
             RemoteSourceFactory remoteSourceFactory,
             TableWriteInfo tableWriteInfo,
             boolean pageSinkCommitRequired)
     {
+        PartitioningScheme partitioningScheme = planFragment.getPartitioningScheme();
         List<VariableReferenceExpression> outputLayout = partitioningScheme.getOutputLayout();
         Session session = taskContext.getSession();
         LocalExecutionPlanContext context = new LocalExecutionPlanContext(taskContext, tableWriteInfo);
-        PhysicalOperation physicalOperation = plan.accept(new Visitor(session, stageExecutionDescriptor, remoteSourceFactory, pageSinkCommitRequired), context);
+        PlanNode plan = planFragment.getRoot();
+        PhysicalOperation physicalOperation = plan.accept(
+                new Visitor(session, planFragment, remoteSourceFactory, pageSinkCommitRequired, taskSourceCodec, tableWriteInfoCodec, planFragmentCodec), context);
 
         Function<Page, Page> pagePreprocessor = enforceLayoutProcessor(outputLayout, physicalOperation.getLayout());
 
@@ -614,7 +615,7 @@ public class LocalExecutionPlanner
                 .map(LocalPlannerAware.class::cast)
                 .forEach(LocalPlannerAware::localPlannerComplete);
 
-        return new LocalExecutionPlan(context.getDriverFactories(), partitionedSourceOrder, stageExecutionDescriptor);
+        return new LocalExecutionPlan(context.getDriverFactories(), planFragment.getTableScanSchedulingOrder(), planFragment.getStageExecutionDescriptor());
     }
 
     private static void addLookupOuterDrivers(LocalExecutionPlanContext context)
@@ -838,11 +839,26 @@ public class LocalExecutionPlanner
         private final StageExecutionDescriptor stageExecutionDescriptor;
         private final RemoteSourceFactory remoteSourceFactory;
         private final boolean pageSinkCommitRequired;
+        private final PlanFragment fragment;
+        private final JsonCodec<TaskSource> taskSourceCodec;
+        private final JsonCodec<PlanFragment> planFragmentCodec;
+        private final JsonCodec<TableWriteInfo> tableWriteInfoCodec;
 
-        private Visitor(Session session, StageExecutionDescriptor stageExecutionDescriptor, RemoteSourceFactory remoteSourceFactory, boolean pageSinkCommitRequired)
+        private Visitor(
+                Session session,
+                PlanFragment fragment,
+                RemoteSourceFactory remoteSourceFactory,
+                boolean pageSinkCommitRequired,
+                JsonCodec<TaskSource> taskSourceCodec,
+                JsonCodec<TableWriteInfo> tableWriteInfoCodec,
+                JsonCodec<PlanFragment> planFragmentCodec)
         {
             this.session = requireNonNull(session, "session is null");
-            this.stageExecutionDescriptor = requireNonNull(stageExecutionDescriptor, "stageExecutionDescriptor is null");
+            this.fragment = requireNonNull(fragment, "fragment is null");
+            this.stageExecutionDescriptor = requireNonNull(fragment.getStageExecutionDescriptor(), "stageExecutionDescriptor is null");
+            this.taskSourceCodec = requireNonNull(taskSourceCodec, "taskSourceCodec is null");
+            this.tableWriteInfoCodec = requireNonNull(tableWriteInfoCodec, "tableWriteInfoCodec is null");
+            this.planFragmentCodec = requireNonNull(planFragmentCodec, "planFragmentCodec is null");
             this.remoteSourceFactory = requireNonNull(remoteSourceFactory, "remoteSourceFactory is null");
             this.pageSinkCommitRequired = pageSinkCommitRequired;
         }
@@ -2948,6 +2964,21 @@ public class LocalExecutionPlanner
                     "driver instance count must match the number of exchange partitions");
 
             return new PhysicalOperation(new LocalExchangeSourceOperatorFactory(context.getNextOperatorId(), node.getId(), localExchangeFactory), makeLayout(node), context, exchangeSourcePipelineExecutionStrategy);
+        }
+
+        @Override
+        public PhysicalOperation visitNativeExecution(NativeExecutionNode node, LocalExecutionPlanContext context)
+        {
+            OperatorFactory operatorFactory = new NativeExecutionOperator.NativeExecutionOperatorFactory(
+                    context.getNextOperatorId(),
+                    node.getId(),
+                    taskSourceCodec,
+                    planFragmentCodec,
+                    tableWriteInfoCodec,
+                    fragment.withSubPlan(node.getSubPlan()),
+                    context.getTableWriteInfo(),
+                    new PagesSerdeFactory(blockEncodingSerde, isExchangeCompressionEnabled(session), isExchangeChecksumEnabled(session)));
+            return new PhysicalOperation(operatorFactory, makeLayout(node), context, UNGROUPED_EXECUTION);
         }
 
         @Override
