@@ -93,7 +93,6 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static com.facebook.airlift.log.Level.ERROR;
 import static com.facebook.airlift.log.Level.WARN;
-import static com.facebook.presto.spark.PrestoSparkSettingsRequirements.SPARK_EXECUTOR_CORES_PROPERTY;
 import static com.facebook.presto.spark.PrestoSparkSettingsRequirements.SPARK_TASK_CPUS_PROPERTY;
 import static com.facebook.presto.spark.classloader_interface.SparkProcessType.DRIVER;
 import static com.facebook.presto.spi.function.RoutineCharacteristics.Language.SQL;
@@ -622,11 +621,18 @@ public class PrestoSparkQueryRunner
             synchronized (SparkContextHolder.class) {
                 if (sparkContext == null) {
                     SparkConf sparkConfiguration = new SparkConf()
-                            .setMaster(format("local[%s]", NODE_COUNT))
+                            .setMaster(format("local[%s]", 1))
+                            // setMaster(format("local[%s]", NODE_COUNT))
                             .setAppName("presto")
                             .set("spark.driver.host", "localhost")
-                            .set(SPARK_EXECUTOR_CORES_PROPERTY, "4")
-                            .set(SPARK_TASK_CPUS_PROPERTY, "4");
+                            .set("spark.hadoop.mapred.split.size.hint", "10737418240")
+                            .set("spark.hadoop.mapred.autosplit.minimum.split.size", "10737418240")
+                            .set("spark.executor.cores", "1")
+                            .set("spark.dynamicAllocation.maxExecutors", "1")
+                            .set(SPARK_TASK_CPUS_PROPERTY, "1")
+                            .set("spark.master", "local[1]");
+//                            .set(SPARK_EXECUTOR_CORES_PROPERTY, "4")
+//                            .set(SPARK_TASK_CPUS_PROPERTY, "4");
                     PrestoSparkConfInitializer.initialize(sparkConfiguration);
                     sparkContext = new SparkContext(sparkConfiguration);
                 }

@@ -11,22 +11,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.spark.execution;
+package com.facebook.presto.operator.nativeexecution;
 
 import com.facebook.airlift.http.client.HttpClient;
+import com.facebook.airlift.json.JsonCodec;
 import com.facebook.airlift.log.Logger;
 import com.facebook.presto.Session;
+import com.facebook.presto.client.ServerInfo;
 import com.facebook.presto.execution.TaskId;
 import com.facebook.presto.execution.TaskInfo;
+import com.facebook.presto.execution.TaskManagerConfig;
 import com.facebook.presto.execution.TaskSource;
 import com.facebook.presto.execution.buffer.OutputBuffers;
 import com.facebook.presto.execution.scheduler.TableWriteInfo;
+import com.facebook.presto.server.TaskUpdateRequest;
 import com.facebook.presto.server.smile.BaseResponse;
-import com.facebook.presto.spark.execution.http.PrestoSparkHttpWorkerClient;
 import com.facebook.presto.spi.page.SerializedPage;
 import com.facebook.presto.sql.planner.PlanFragment;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
+import io.airlift.units.Duration;
 
 import java.net.URI;
 import java.util.List;
@@ -73,8 +77,15 @@ public class NativeExecutionTask
             List<TaskSource> sources,
             HttpClient httpClient,
             TableWriteInfo tableWriteInfo,
+            Duration maxErrorDuration,
             Executor executor,
-            ScheduledExecutorService updateScheduledExecutor)
+            ScheduledExecutorService errorRetryScheduledExecutor,
+            ScheduledExecutorService updateScheduledExecutor,
+            JsonCodec<TaskInfo> taskInfoCodec,
+            JsonCodec<PlanFragment> planFragmentCodec,
+            JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec,
+            JsonCodec<ServerInfo> serverInfoCodec,
+            TaskManagerConfig taskManagerConfig)
     {
         this.session = requireNonNull(session, "session is null");
         this.planFragment = requireNonNull(planFragment, "planFragment is null");
@@ -82,12 +93,14 @@ public class NativeExecutionTask
         this.sources = requireNonNull(sources, "sources is null");
         this.executor = requireNonNull(executor, "executor is null");
         this.outputBuffers = createInitialEmptyOutputBuffers(PARTITIONED);
-        this.workerClient = new PrestoSparkHttpWorkerClient(requireNonNull(httpClient, "httpClient is null"), taskId, location);
+        this.workerClient = new PrestoSparkHttpWorkerClient(
+                requireNonNull(httpClient, "httpClient is null"), taskId, location, maxErrorDuration, errorRetryScheduledExecutor, taskInfoCodec, planFragmentCodec, taskUpdateRequestCodec, taskManagerConfig.getInfoRefreshMaxWait());
         requireNonNull(updateScheduledExecutor, "updateScheduledExecutor is null");
         this.taskInfoFetcher = new HttpNativeExecutionTaskInfoFetcher(
                 updateScheduledExecutor,
                 this.workerClient,
-                this.executor);
+                this.executor,
+                taskManagerConfig.getInfoUpdateInterval());
         this.taskResultFetcher = new HttpNativeExecutionTaskResultFetcher(
                 updateScheduledExecutor,
                 this.workerClient,
@@ -126,6 +139,7 @@ public class NativeExecutionTask
         CompletableFuture<Void> updateFuture = sendUpdateRequest().handle((Void result, Throwable t) ->
         {
             if (t != null) {
+                log.error(t);
                 throw new CompletionException(t.getCause());
             }
             taskInfoFetcher.start();

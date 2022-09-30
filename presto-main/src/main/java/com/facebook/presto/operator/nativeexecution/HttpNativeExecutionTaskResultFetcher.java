@@ -11,10 +11,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.spark.execution;
+package com.facebook.presto.operator.nativeexecution;
 
+import com.facebook.airlift.log.Logger;
 import com.facebook.presto.operator.PageBufferClient;
-import com.facebook.presto.spark.execution.http.PrestoSparkHttpWorkerClient;
+import com.facebook.presto.operator.PageTransportErrorException;
 import com.facebook.presto.spi.HostAddress;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.page.SerializedPage;
@@ -30,7 +31,6 @@ import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static com.facebook.presto.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
@@ -51,9 +51,12 @@ import static java.util.Objects.requireNonNull;
  */
 public class HttpNativeExecutionTaskResultFetcher
 {
+    private static final Logger log = Logger.get(HttpNativeExecutionTaskResultFetcher.class);
     private static final Duration FETCH_INTERVAL = new Duration(200, TimeUnit.MILLISECONDS);
-    private static final Duration POLL_TIMEOUT = new Duration(100, TimeUnit.MILLISECONDS);
-    private static final Duration REQUEST_TIMEOUT = new Duration(200, TimeUnit.MILLISECONDS);
+    private static final Duration POLL_TIMEOUT = new Duration(200, TimeUnit.MILLISECONDS);
+    // private static final Duration REQUEST_TIMEOUT = new Duration(200, TimeUnit.MILLISECONDS);
+    //    private static final Duration POLL_TIMEOUT = new Duration(10, TimeUnit.MINUTES);
+    private static final Duration REQUEST_TIMEOUT = new Duration(10, TimeUnit.MINUTES);
     private static final DataSize MAX_BUFFER_SIZE = new DataSize(128, DataSize.Unit.MEGABYTE);
 
     private final ScheduledExecutorService scheduler;
@@ -101,6 +104,7 @@ public class HttpNativeExecutionTaskResultFetcher
                 {
                     schedulerFuture.cancel(false);
                     if (throwable != null) {
+                        log.error(throwable);
                         throw new CompletionException(throwable.getCause());
                     }
                     return result;
@@ -135,7 +139,7 @@ public class HttpNativeExecutionTaskResultFetcher
             implements Runnable
     {
         private static final DataSize MAX_RESPONSE_SIZE = new DataSize(32, DataSize.Unit.MEGABYTE);
-        private static final int MAX_HTTP_TIMEOUT_RETRIES = 5;
+        private static final int MAX_TRANSPORT_ERROR_RETRIES = 5;
 
         private final Duration requestTimeout;
         private final PrestoSparkHttpWorkerClient client;
@@ -144,6 +148,8 @@ public class HttpNativeExecutionTaskResultFetcher
         private final CompletableFuture<Void> future;
 
         private int timeoutRetries;
+        private int transportErrorRetries;
+
         private long token;
 
         public HttpNativeExecutionTaskResultFetcherRunner(
@@ -174,9 +180,9 @@ public class HttpNativeExecutionTaskResultFetcher
                     return;
                 }
                 PageBufferClient.PagesResponse pagesResponse = client.getResults(
-                        token,
-                        MAX_RESPONSE_SIZE)
-                        .get((long) requestTimeout.getValue(), requestTimeout.getUnit());
+                                token,
+                                MAX_RESPONSE_SIZE)
+                        .get();
 
                 List<SerializedPage> pages = pagesResponse.getPages();
                 long bytes = 0;
@@ -208,12 +214,18 @@ public class HttpNativeExecutionTaskResultFetcher
                     future.completeExceptionally(e);
                 }
             }
-            catch (ExecutionException | PrestoException e) {
-                client.abortResults();
-                future.completeExceptionally(e);
-            }
-            catch (TimeoutException e) {
-                if (++timeoutRetries >= MAX_HTTP_TIMEOUT_RETRIES) {
+            catch (ExecutionException e) {
+                try {
+                    throw e.getCause();
+                }
+                catch (PageTransportErrorException ex) {
+                    if (++transportErrorRetries >= MAX_TRANSPORT_ERROR_RETRIES) {
+                        client.abortResults();
+                        future.completeExceptionally(ex);
+                    }
+                }
+                catch (Throwable throwable) {
+                    e.printStackTrace();
                     client.abortResults();
                     future.completeExceptionally(e);
                 }

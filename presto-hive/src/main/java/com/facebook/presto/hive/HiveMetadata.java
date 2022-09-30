@@ -15,6 +15,7 @@ package com.facebook.presto.hive;
 
 import com.facebook.airlift.json.JsonCodec;
 import com.facebook.airlift.json.smile.SmileCodec;
+import com.facebook.airlift.log.Logger;
 import com.facebook.presto.common.Subfield;
 import com.facebook.presto.common.block.Block;
 import com.facebook.presto.common.predicate.Domain;
@@ -374,6 +375,8 @@ import static org.apache.hadoop.hive.ql.io.AcidUtils.isTransactionalTable;
 public class HiveMetadata
         implements TransactionalMetadata
 {
+    private static final Logger log = Logger.get(HiveMetadata.class);
+
     public static final String PRESTO_VERSION_NAME = "presto_version";
     public static final String TABLE_COMMENT = "comment";
     public static final Set<String> RESERVED_ROLES = ImmutableSet.of("all", "default", "none");
@@ -1590,6 +1593,9 @@ public class HiveMetadata
         checkPartitionTypesSupported(partitionColumns);
 
         LocationHandle locationHandle = locationService.forNewTable(metastore, session, schemaName, tableName, isTempPathRequired(session, bucketProperty, preferredOrderingColumns));
+        System.out.println("=====Sapphire_on_Velox=====LocationHandle:targetPath=" + locationHandle.getTargetPath() + ",writePath=" + locationHandle.getWritePath() + "," +
+                "writeMode" +
+                "=" + locationHandle.getWriteMode());
 
         HdfsContext context = new HdfsContext(session, schemaName, tableName, locationHandle.getTargetPath().toString(), true);
         Map<String, String> tableProperties = getEmptyTableProperties(
@@ -1722,6 +1728,7 @@ public class HiveMetadata
             verify(handle.getPartitionStorageFormat() == handle.getTableStorageFormat());
         }
         for (PartitionUpdate update : partitionUpdates) {
+            System.out.println("=====Sapphire_on_Velox=====" + update.toString());
             Map<String, String> partitionParameters = partitionEncryptionParameters;
             if (isPreferManifestsToListFiles(session) && isFileRenamingEnabled(session)) {
                 // Store list of file names and sizes in partition metadata when prefer_manifests_to_list_files and file_renaming_enabled are set to true
@@ -1905,6 +1912,10 @@ public class HiveMetadata
             locationHandle = locationService.forExistingTable(metastore, session, table, tempPathRequired);
         }
 
+        System.out.println("=====Sapphire_on_Velox=====LocationHandle:targetPath=" + locationHandle.getTargetPath() + ",writePath=" + locationHandle.getWritePath() + "," +
+                "writeMode" +
+                "=" + locationHandle.getWriteMode());
+
         Optional<? extends TableEncryptionProperties> tableEncryptionProperties = getTableEncryptionPropertiesFromHiveProperties(table.getParameters(), tableStorageFormat);
 
         HiveStorageFormat partitionStorageFormat = isRespectTableFormat(session) ? tableStorageFormat : getHiveStorageFormat(session);
@@ -2029,6 +2040,7 @@ public class HiveMetadata
         Map<String, Optional<Partition>> existingPartitions = getExistingPartitionsByNames(metastoreContext, handle.getSchemaName(), handle.getTableName(), partitionUpdates);
 
         for (PartitionUpdate partitionUpdate : partitionUpdates) {
+            System.out.println("=====Sapphire_on_Velox=====" + partitionUpdate.toString());
             if (partitionUpdate.getName().isEmpty()) {
                 if (handle.getEncryptionInformation().isPresent()) {
                     throw new PrestoException(HIVE_UNSUPPORTED_ENCRYPTION_OPERATION, "Inserting into an existing table with encryption enabled is not supported yet");
@@ -2149,8 +2161,8 @@ public class HiveMetadata
      * This is required when we are overwriting the partitions by directly writing the new
      * files to the existing directory, where files written by older queries may be present too.
      *
-     * @param  session  the ConnectorSession object
-     * @param  partitionPath the path of the partition from where the older files are to be deleted
+     * @param session the ConnectorSession object
+     * @param partitionPath the path of the partition from where the older files are to be deleted
      */
     private void removeNonCurrentQueryFiles(ConnectorSession session, Path partitionPath)
     {
@@ -2711,9 +2723,9 @@ public class HiveMetadata
 
         TupleDomain<Subfield> domainPredicate = hivePartitionResult.getEffectivePredicate().transform(HiveMetadata::toSubfield);
         Table table = metastore.getTable(
-                getMetastoreContext(session),
-                handle.getSchemaTableName().getSchemaName(),
-                handle.getSchemaTableName().getTableName())
+                        getMetastoreContext(session),
+                        handle.getSchemaTableName().getSchemaName(),
+                        handle.getSchemaTableName().getTableName())
                 .orElseThrow(() -> new TableNotFoundException(handle.getSchemaTableName()));
         return ImmutableList.of(new ConnectorTableLayoutResult(
                 getTableLayout(

@@ -489,8 +489,11 @@ public class MetastoreUtil
     public static void renameFile(FileSystem fileSystem, Path source, Path target)
     {
         try {
-            if (fileSystem.exists(target) || !fileSystem.rename(source, target)) {
-                throw new PrestoException(HIVE_FILESYSTEM_ERROR, getRenameErrorMessage(source, target));
+            if (fileSystem.exists(target)) {
+                throw new PrestoException(HIVE_FILESYSTEM_ERROR, "Target already exist!! " + getRenameErrorMessage(source, target));
+            }
+            if (!fileSystem.rename(source, target)) {
+                throw new PrestoException(HIVE_FILESYSTEM_ERROR, "File system rename just failed!! " + getRenameErrorMessage(source, target));
             }
         }
         catch (IOException e) {

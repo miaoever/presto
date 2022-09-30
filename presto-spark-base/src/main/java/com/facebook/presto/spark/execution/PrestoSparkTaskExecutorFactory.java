@@ -19,6 +19,7 @@ import com.facebook.airlift.log.Logger;
 import com.facebook.airlift.stats.TestingGcMonitor;
 import com.facebook.presto.Session;
 import com.facebook.presto.common.block.BlockEncodingManager;
+import com.facebook.presto.common.block.BlockEncodingSerde;
 import com.facebook.presto.common.io.DataOutput;
 import com.facebook.presto.event.SplitMonitor;
 import com.facebook.presto.execution.ExecutionFailureInfo;
@@ -199,6 +200,8 @@ public class PrestoSparkTaskExecutorFactory
 
     private final AtomicBoolean memoryRevokePending = new AtomicBoolean();
     private final AtomicBoolean memoryRevokeRequestInProgress = new AtomicBoolean();
+    private final NativeExecutionProcessFactory nativeExecutionProcessFactory;
+    private final BlockEncodingSerde blockEncodingSerde;
 
     @Inject
     public PrestoSparkTaskExecutorFactory(
@@ -223,7 +226,9 @@ public class PrestoSparkTaskExecutorFactory
             NodeSpillConfig nodeSpillConfig,
             TempStorageManager tempStorageManager,
             PrestoSparkBroadcastTableCacheManager prestoSparkBroadcastTableCacheManager,
-            PrestoSparkConfig prestoSparkConfig)
+            PrestoSparkConfig prestoSparkConfig,
+            NativeExecutionProcessFactory nativeExecutionProcessFactory,
+            BlockEncodingSerde blockEncodingSerde)
     {
         this(
                 sessionPropertyManager,
@@ -251,7 +256,9 @@ public class PrestoSparkTaskExecutorFactory
                 requireNonNull(taskManagerConfig, "taskManagerConfig is null").isTaskAllocationTrackingEnabled(),
                 tempStorageManager,
                 requireNonNull(prestoSparkConfig, "prestoSparkConfig is null").getStorageBasedBroadcastJoinStorage(),
-                prestoSparkBroadcastTableCacheManager);
+                prestoSparkBroadcastTableCacheManager,
+                nativeExecutionProcessFactory,
+                blockEncodingSerde);
     }
 
     public PrestoSparkTaskExecutorFactory(
@@ -280,7 +287,9 @@ public class PrestoSparkTaskExecutorFactory
             boolean allocationTrackingEnabled,
             TempStorageManager tempStorageManager,
             String storageBasedBroadcastJoinStorage,
-            PrestoSparkBroadcastTableCacheManager prestoSparkBroadcastTableCacheManager)
+            PrestoSparkBroadcastTableCacheManager prestoSparkBroadcastTableCacheManager,
+            NativeExecutionProcessFactory nativeExecutionProcessFactory,
+            BlockEncodingSerde blockEncodingSerde)
     {
         this.sessionPropertyManager = requireNonNull(sessionPropertyManager, "sessionPropertyManager is null");
         this.blockEncodingManager = requireNonNull(blockEncodingManager, "blockEncodingManager is null");
@@ -309,6 +318,8 @@ public class PrestoSparkTaskExecutorFactory
         this.tempStorageManager = requireNonNull(tempStorageManager, "tempStorageManager is null");
         this.storageBasedBroadcastJoinStorage = requireNonNull(storageBasedBroadcastJoinStorage, "storageBasedBroadcastJoinStorage is null");
         this.prestoSparkBroadcastTableCacheManager = requireNonNull(prestoSparkBroadcastTableCacheManager, "prestoSparkBroadcastTableCacheManager is null");
+        this.nativeExecutionProcessFactory = requireNonNull(nativeExecutionProcessFactory, "nativeExecutionProcessFactory is null");
+        this.blockEncodingSerde = requireNonNull(blockEncodingSerde, "blockEncodingSerde is null");
     }
 
     @Override
@@ -570,10 +581,7 @@ public class PrestoSparkTaskExecutorFactory
 
         LocalExecutionPlan localExecutionPlan = localExecutionPlanner.plan(
                 taskContext,
-                fragment.getRoot(),
-                fragment.getPartitioningScheme(),
-                fragment.getStageExecutionDescriptor(),
-                fragment.getTableScanSchedulingOrder(),
+                fragment,
                 output.getOutputFactory(),
                 new PrestoSparkRemoteSourceFactory(
                         blockEncodingManager,
@@ -587,7 +595,8 @@ public class PrestoSparkTaskExecutorFactory
                         prestoSparkBroadcastTableCacheManager,
                         stageId),
                 taskDescriptor.getTableWriteInfo(),
-                true);
+                true,
+                ImmutableList.of(new NativeExecutionOperator.NativeExecutionOperatorTranslator(session, fragment, blockEncodingSerde, nativeExecutionProcessFactory)));
 
         taskStateMachine.addStateChangeListener(state -> {
             if (state.isDone()) {

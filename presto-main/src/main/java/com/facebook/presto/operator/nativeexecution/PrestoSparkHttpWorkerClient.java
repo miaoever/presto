@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.spark.execution.http;
+package com.facebook.presto.operator.nativeexecution;
 
 import com.facebook.airlift.http.client.HttpClient;
 import com.facebook.airlift.http.client.HttpStatus;
@@ -29,17 +29,20 @@ import com.facebook.presto.execution.scheduler.TableWriteInfo;
 import com.facebook.presto.operator.HttpRpcShuffleClient;
 import com.facebook.presto.operator.PageBufferClient;
 import com.facebook.presto.operator.RpcShuffleClient;
+import com.facebook.presto.server.RequestErrorTracker;
 import com.facebook.presto.server.TaskUpdateRequest;
 import com.facebook.presto.server.smile.BaseResponse;
 import com.facebook.presto.sql.planner.PlanFragment;
 import com.google.common.util.concurrent.ListenableFuture;
 import io.airlift.units.DataSize;
+import io.airlift.units.Duration;
 
 import javax.annotation.concurrent.ThreadSafe;
 
 import java.net.URI;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ScheduledExecutorService;
 
 import static com.facebook.airlift.http.client.HttpStatus.familyForStatusCode;
 import static com.facebook.airlift.http.client.HttpUriBuilder.uriBuilderFrom;
@@ -49,6 +52,7 @@ import static com.facebook.airlift.http.client.Request.Builder.preparePost;
 import static com.facebook.airlift.http.client.StaticBodyGenerator.createStaticBodyGenerator;
 import static com.facebook.airlift.http.client.StatusResponseHandler.createStatusResponseHandler;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_MAX_SIZE;
+import static com.facebook.presto.client.PrestoHeaders.PRESTO_MAX_WAIT;
 import static com.facebook.presto.server.RequestHelpers.setContentTypeHeaders;
 import static com.facebook.presto.server.smile.AdaptingJsonResponseHandler.createAdaptingJsonResponseHandler;
 import static java.util.Objects.requireNonNull;
@@ -69,18 +73,34 @@ public class PrestoSparkHttpWorkerClient
     private final JsonCodec<TaskInfo> taskInfoCodec;
     private final JsonCodec<PlanFragment> planFragmentCodec;
     private final JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec;
+    private final RequestErrorTracker errorTracker;
+    private final Duration maxErrorDuration;
+    private final Duration infoRefreshMaxWait;
 
-    public PrestoSparkHttpWorkerClient(HttpClient httpClient, TaskId taskId, URI location)
+    public PrestoSparkHttpWorkerClient(
+            HttpClient httpClient,
+            TaskId taskId,
+            URI location,
+            Duration maxErrorDuration,
+            ScheduledExecutorService errorRetryScheduledExecutor,
+            JsonCodec<TaskInfo> taskInfoCodec,
+            JsonCodec<PlanFragment> planFragmentCodec,
+            JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec,
+            Duration infoRefreshMaxWait)
     {
         this.httpClient = requireNonNull(httpClient, "httpClient is null");
         this.taskId = requireNonNull(taskId, "taskId is null");
         this.location = requireNonNull(location, "location is null");
-        this.taskInfoCodec = JsonCodec.jsonCodec(TaskInfo.class);
-        this.planFragmentCodec = JsonCodec.jsonCodec(PlanFragment.class);
-        this.taskUpdateRequestCodec = JsonCodec.jsonCodec(TaskUpdateRequest.class);
+        this.taskInfoCodec = taskInfoCodec;
+        this.planFragmentCodec = planFragmentCodec;
+        this.taskUpdateRequestCodec = taskUpdateRequestCodec;
         this.taskUri = uriBuilderFrom(location)
                 .appendPath(taskId.toString())
                 .build();
+        this.errorTracker = RequestErrorTracker.taskRequestErrorTracker(taskId, taskUri, maxErrorDuration, errorRetryScheduledExecutor, "getting native execution task status");
+        this.maxErrorDuration = requireNonNull(maxErrorDuration, "maxErrorDuration is null");
+        this.infoRefreshMaxWait = requireNonNull(infoRefreshMaxWait, "infoRefreshMaxWait is null");
+        log.info("########## httpWorkerClient=" + infoRefreshMaxWait.toString());
     }
 
     /**
@@ -119,7 +139,7 @@ public class PrestoSparkHttpWorkerClient
                 {
                     @Override
                     public Void handleException(Request request,
-                                                Exception exception)
+                            Exception exception)
                     {
                         log.debug(exception, "Acknowledge request failed: %s", uri);
                         return null;
@@ -156,6 +176,7 @@ public class PrestoSparkHttpWorkerClient
     public ListenableFuture<BaseResponse<TaskInfo>> getTaskInfo()
     {
         Request request = setContentTypeHeaders(false, prepareGet())
+                .setHeader(PRESTO_MAX_WAIT, infoRefreshMaxWait.toString())
                 .setUri(taskUri)
                 .build();
         ResponseHandler responseHandler = createAdaptingJsonResponseHandler(taskInfoCodec);

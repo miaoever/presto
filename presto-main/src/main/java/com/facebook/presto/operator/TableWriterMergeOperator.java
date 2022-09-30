@@ -159,6 +159,7 @@ public class TableWriterMergeOperator
     @Override
     public void addInput(Page page)
     {
+        System.out.println("=====Sapphire_on_Velox=====In TableWriterMergeOperator");
         requireNonNull(page, "page is null");
         checkState(state == State.RUNNING, "Operator is %s", state);
 

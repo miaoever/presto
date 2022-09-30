@@ -491,6 +491,8 @@ public class HivePageSink
             HiveWriter writer = writerFactory.createWriter(partitionColumns, position, bucketNumber);
             writers.set(writerIndex, writer);
 
+            log.info("=====Sapphire_on_Velox=====Created writer for " + writer);
+
             // Send metadata update request if needed
             sendMetadataUpdateRequest(writer.getPartitionName(), writerIndex, writer.isWriteTempData());
         }

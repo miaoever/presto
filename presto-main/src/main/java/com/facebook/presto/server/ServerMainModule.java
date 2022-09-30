@@ -39,6 +39,7 @@ import com.facebook.presto.common.block.Block;
 import com.facebook.presto.common.block.BlockEncoding;
 import com.facebook.presto.common.block.BlockEncodingManager;
 import com.facebook.presto.common.block.BlockEncodingSerde;
+import com.facebook.presto.common.block.ByteArrayBlock;
 import com.facebook.presto.common.type.Type;
 import com.facebook.presto.common.type.TypeManager;
 import com.facebook.presto.connector.ConnectorManager;
@@ -62,6 +63,7 @@ import com.facebook.presto.execution.TaskInfo;
 import com.facebook.presto.execution.TaskManagementExecutor;
 import com.facebook.presto.execution.TaskManager;
 import com.facebook.presto.execution.TaskManagerConfig;
+import com.facebook.presto.execution.TaskSource;
 import com.facebook.presto.execution.TaskStatus;
 import com.facebook.presto.execution.TaskThresholdMemoryRevokingScheduler;
 import com.facebook.presto.execution.buffer.SpoolingOutputBufferFactory;
@@ -73,6 +75,7 @@ import com.facebook.presto.execution.scheduler.NetworkTopology;
 import com.facebook.presto.execution.scheduler.NodeScheduler;
 import com.facebook.presto.execution.scheduler.NodeSchedulerConfig;
 import com.facebook.presto.execution.scheduler.NodeSchedulerExporter;
+import com.facebook.presto.execution.scheduler.TableWriteInfo;
 import com.facebook.presto.execution.scheduler.nodeSelection.NodeSelectionStats;
 import com.facebook.presto.execution.scheduler.nodeSelection.SimpleTtlNodeSelectorConfig;
 import com.facebook.presto.index.IndexManager;
@@ -143,9 +146,11 @@ import com.facebook.presto.spi.ConnectorTypeSerde;
 import com.facebook.presto.spi.PageIndexerFactory;
 import com.facebook.presto.spi.PageSorter;
 import com.facebook.presto.spi.function.SqlInvokedFunction;
+import com.facebook.presto.spi.relation.ConstantExpression;
 import com.facebook.presto.spi.relation.DeterminismEvaluator;
 import com.facebook.presto.spi.relation.DomainTranslator;
 import com.facebook.presto.spi.relation.PredicateCompiler;
+import com.facebook.presto.spi.relation.RowExpression;
 import com.facebook.presto.spi.relation.VariableReferenceExpression;
 import com.facebook.presto.spi.tracing.TracerProvider;
 import com.facebook.presto.spiller.FileSingleStreamSpillerFactory;
@@ -202,6 +207,7 @@ import com.facebook.presto.util.FinalizerService;
 import com.facebook.presto.util.GcStatusMonitor;
 import com.facebook.presto.version.EmbedVersion;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ser.std.ByteArraySerializer;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.inject.Binder;
@@ -499,6 +505,8 @@ public class ServerMainModule
         jsonCodecBinder(binder).bindJsonCodec(ExecutionFailureInfo.class);
         jsonCodecBinder(binder).bindJsonCodec(TableCommitContext.class);
         jsonCodecBinder(binder).bindJsonCodec(SqlInvokedFunction.class);
+        jsonCodecBinder(binder).bindJsonCodec(TaskSource.class);
+        jsonCodecBinder(binder).bindJsonCodec(TableWriteInfo.class);
         smileCodecBinder(binder).bindSmileCodec(TaskStatus.class);
         smileCodecBinder(binder).bindSmileCodec(TaskInfo.class);
         thriftCodecBinder(binder).bindThriftCodec(TaskStatus.class);
@@ -549,7 +557,7 @@ public class ServerMainModule
         binder.bind(ConnectorTypeSerdeManager.class).in(Scopes.SINGLETON);
 
         // connector metadata update handle json serde
-        binder.bind(new TypeLiteral<ConnectorTypeSerde<ConnectorMetadataUpdateHandle>>(){})
+        binder.bind(new TypeLiteral<ConnectorTypeSerde<ConnectorMetadataUpdateHandle>>() {})
                 .annotatedWith(ForJsonMetadataUpdateHandle.class)
                 .to(ConnectorMetadataUpdateHandleJsonSerde.class)
                 .in(Scopes.SINGLETON);
@@ -683,6 +691,11 @@ public class ServerMainModule
         newSetBinder(binder, BlockEncoding.class);
         jsonBinder(binder).addSerializerBinding(Block.class).to(BlockJsonSerde.Serializer.class);
         jsonBinder(binder).addDeserializerBinding(Block.class).to(BlockJsonSerde.Deserializer.class);
+        jsonBinder(binder).addSerializerBinding(ByteArrayBlock.class).to(ByteArraySerializer.class);
+        jsonBinder(binder).addSerializerBinding(RowExpression.class).to(BlockJsonSerde.Serializer.class);
+        jsonBinder(binder).addSerializerBinding(ConstantExpression.class).to(BlockJsonSerde.Serializer.class);
+        jsonCodecBinder(binder).bindJsonCodec(RowExpression.class);
+        jsonCodecBinder(binder).bindJsonCodec(ByteArrayBlock.class);
 
         // thread visualizer
         jaxrsBinder(binder).bind(ThreadResource.class);

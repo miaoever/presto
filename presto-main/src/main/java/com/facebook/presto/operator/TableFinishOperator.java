@@ -14,6 +14,7 @@
 package com.facebook.presto.operator;
 
 import com.facebook.airlift.json.JsonCodec;
+import com.facebook.airlift.log.Logger;
 import com.facebook.presto.Session;
 import com.facebook.presto.common.Page;
 import com.facebook.presto.common.PageBuilder;
@@ -68,6 +69,8 @@ import static java.util.Objects.requireNonNull;
 public class TableFinishOperator
         implements Operator
 {
+    private static final Logger log = Logger.get(TableFinishOperator.class);
+
     public static final List<Type> TYPES = ImmutableList.of(BIGINT);
 
     public static class TableFinishOperatorFactory
@@ -285,7 +288,9 @@ public class TableFinishOperator
         }
         state = State.FINISHED;
 
+        log.info("=====Sapphire_on_Velox=====Before file rename");
         lifespanAndStageStateTracker.commit();
+        log.info("=====Sapphire_on_Velox=====Before finish table");
         outputMetadata.set(tableFinisher.finishTable(lifespanAndStageStateTracker.getFinalFragments(), computedStatisticsBuilder.build()));
 
         // output page will only be constructed once,
@@ -468,9 +473,9 @@ public class TableFinishOperator
         {
             checkState(uncommittedRecoverableLifespanAndStageStates.isEmpty(), "All recoverable LifespanAndStage should be committed when fetching final row count");
             return Streams.concat(
-                    noCommitUnrecoverableLifespanAndStageStates.values().stream(),
-                    taskCommitUnrecoverableLifespanAndStageStates.values().stream(),
-                    committedRecoverableLifespanAndStages.values().stream())
+                            noCommitUnrecoverableLifespanAndStageStates.values().stream(),
+                            taskCommitUnrecoverableLifespanAndStageStates.values().stream(),
+                            committedRecoverableLifespanAndStages.values().stream())
                     .mapToLong(LifespanAndStageState::getRowCount)
                     .sum();
         }
@@ -479,9 +484,9 @@ public class TableFinishOperator
         {
             checkState(uncommittedRecoverableLifespanAndStageStates.isEmpty(), "All recoverable LifespanAndStage should be committed when fetching final fragments");
             return Streams.concat(
-                    noCommitUnrecoverableLifespanAndStageStates.values().stream(),
-                    taskCommitUnrecoverableLifespanAndStageStates.values().stream(),
-                    committedRecoverableLifespanAndStages.values().stream())
+                            noCommitUnrecoverableLifespanAndStageStates.values().stream(),
+                            taskCommitUnrecoverableLifespanAndStageStates.values().stream(),
+                            committedRecoverableLifespanAndStages.values().stream())
                     .map(LifespanAndStageState::getFragments)
                     .flatMap(List::stream)
                     .collect(toImmutableList());

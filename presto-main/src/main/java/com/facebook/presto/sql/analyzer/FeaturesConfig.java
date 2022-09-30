@@ -236,6 +236,9 @@ public class FeaturesConfig
     private boolean isOptimizeMultipleApproxPercentileOnSameFieldEnabled = true;
     private boolean nativeExecutionEnabled;
     private String nativeExecutionExecutablePath = "./presto_server";
+    private String nativeExecutionLogPath = "/tmp";
+    private String nativeExecutionConfigPath = "/tmp";
+    private String nativeExecutionCatalogName = "hive";
     private boolean randomizeOuterJoinNullKey;
 
     public enum PartitioningPrecisionStrategy
@@ -2215,9 +2218,48 @@ public class FeaturesConfig
         return this;
     }
 
+    @Config("native-execution-log-path")
+    @ConfigDescription("Native execution log path")
+    public FeaturesConfig setNativeExecutionLogPath(String nativeExecutionLogPath)
+    {
+        this.nativeExecutionLogPath = nativeExecutionLogPath;
+        return this;
+    }
+
+    @Config("native-execution-config-path")
+    @ConfigDescription("Native execution config path")
+    public FeaturesConfig setNativeExecutionConfigPath(String nativeExecutionConfigPath)
+    {
+        this.nativeExecutionConfigPath = nativeExecutionConfigPath;
+        return this;
+    }
+
+    @Config("native-execution-catalog-name")
+    @ConfigDescription("Native execution catalog name")
+    public FeaturesConfig setNativeExecutionCatalogName(String nativeExecutionCatalogName)
+    {
+        this.nativeExecutionCatalogName = nativeExecutionCatalogName;
+        return this;
+    }
+
     public String getNativeExecutionExecutablePath()
     {
         return this.nativeExecutionExecutablePath;
+    }
+
+    public String getNativeExecutionLogPath()
+    {
+        return this.nativeExecutionLogPath;
+    }
+
+    public String getNativeExecutionConfigPath()
+    {
+        return this.nativeExecutionConfigPath;
+    }
+
+    public String getNativeExecutionCatalogName()
+    {
+        return this.nativeExecutionCatalogName;
     }
 
     public boolean isRandomizeOuterJoinNullKeyEnabled()

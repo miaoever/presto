@@ -878,15 +878,13 @@ public class LocalQueryRunner
         StreamingSubPlan streamingSubPlan = streamingPlanSection.getPlan();
         LocalExecutionPlan localExecutionPlan = executionPlanner.plan(
                 taskContext,
-                stageExecutionDescriptor,
-                subplan.getFragment().getRoot(),
-                subplan.getFragment().getPartitioningScheme(),
-                subplan.getFragment().getTableScanSchedulingOrder(),
+                subplan.getFragment(),
                 outputFactory,
                 Optional.empty(),
                 new UnsupportedRemoteSourceFactory(),
                 createTableWriteInfo(streamingSubPlan, metadata, session),
-                false);
+                false,
+                ImmutableList.of());
 
         // generate sources
         List<TaskSource> sources = new ArrayList<>();

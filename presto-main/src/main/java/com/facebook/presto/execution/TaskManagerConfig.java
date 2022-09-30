@@ -40,6 +40,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
         "task.operator-pre-allocated-memory",
         "sink.new-implementation",
         "task.legacy-scheduling-behavior",
+        "experimental.task.info-update-refresh-max-wait",
         "task.level-absolute-priority"})
 public class TaskManagerConfig
 {

@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.hive;
 
+import com.facebook.airlift.log.Logger;
 import com.facebook.presto.hive.PartitionUpdate.FileWriteInfo;
 import com.facebook.presto.spi.ConnectorSession;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -36,6 +37,7 @@ import static java.util.Objects.requireNonNull;
 public class HiveStagingFileCommitter
         implements StagingFileCommitter
 {
+    private static final Logger log = Logger.get(HiveStagingFileCommitter.class);
     private final HdfsEnvironment hdfsEnvironment;
     private final ListeningExecutorService fileRenameExecutor;
 
@@ -68,6 +70,7 @@ public class HiveStagingFileCommitter
                 Path source = new Path(path, fileWriteInfo.getWriteFileName());
                 Path target = new Path(path, fileWriteInfo.getTargetFileName());
                 commitFutures.add(fileRenameExecutor.submit(() -> {
+                    System.out.print("=====Sapphire_on_Velox=====Rename " + source + " to " + target);
                     renameFile(fileSystem, source, target);
                     return null;
                 }));

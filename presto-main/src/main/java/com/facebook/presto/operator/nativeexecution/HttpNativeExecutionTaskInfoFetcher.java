@@ -11,12 +11,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.spark.execution;
+package com.facebook.presto.operator.nativeexecution;
 
 import com.facebook.airlift.log.Logger;
 import com.facebook.presto.execution.TaskInfo;
 import com.facebook.presto.server.smile.BaseResponse;
-import com.facebook.presto.spark.execution.http.PrestoSparkHttpWorkerClient;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -49,6 +48,7 @@ public class HttpNativeExecutionTaskInfoFetcher
     private final ScheduledExecutorService updateScheduledExecutor;
     private final AtomicReference<TaskInfo> taskInfo = new AtomicReference<>();
     private final Executor executor;
+    private final Duration infoFetchInterval;
 
     @GuardedBy("this")
     private ScheduledFuture<?> scheduledFuture;
@@ -56,16 +56,19 @@ public class HttpNativeExecutionTaskInfoFetcher
     public HttpNativeExecutionTaskInfoFetcher(
             ScheduledExecutorService updateScheduledExecutor,
             PrestoSparkHttpWorkerClient workerClient,
-            Executor executor)
+            Executor executor,
+            Duration infoFetchInterval)
     {
         this.workerClient = requireNonNull(workerClient, "workerClient is null");
         this.updateScheduledExecutor = requireNonNull(updateScheduledExecutor, "updateScheduledExecutor is null");
         this.executor = requireNonNull(executor, "executor is null");
+        this.infoFetchInterval = requireNonNull(infoFetchInterval, "infoFetchInterval is null");
+        log.info("########## infoFetchInterval=" + infoFetchInterval.toString());
     }
 
     public void start()
     {
-        scheduledFuture = updateScheduledExecutor.scheduleWithFixedDelay(() ->
+        scheduledFuture = updateScheduledExecutor.scheduleWithFixedDelay((Runnable) () ->
         {
             try {
                 ListenableFuture<BaseResponse<TaskInfo>> taskInfoFuture = workerClient.getTaskInfo();
@@ -91,7 +94,7 @@ public class HttpNativeExecutionTaskInfoFetcher
             catch (Throwable t) {
                 throw t;
             }
-        }, 0, (long) GET_TASK_INFO_INTERVALS.getValue(), GET_TASK_INFO_INTERVALS.getUnit());
+        }, 0L, (long) infoFetchInterval.getValue(), infoFetchInterval.getUnit());
     }
 
     public void stop()

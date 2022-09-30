@@ -251,6 +251,9 @@ public final class SystemSessionProperties
     public static final String NATIVE_AGGREGATION_SPILL_MEMORY_THRESHOLD = "aggregation_spill_memory_threshold";
     public static final String NATIVE_EXECUTION_ENABLED = "native_execution_enabled";
     public static final String NATIVE_EXECUTION_EXECUTABLE_PATH = "native_execution_executable_path";
+    public static final String NATIVE_EXECUTION_LOG_PATH = "native_execution_log_path";
+    public static final String NATIVE_EXECUTION_CONFIG_PATH = "native_execution_config_path";
+    public static final String NATIVE_EXECUTION_CATALOG_NAME = "native_execution_catalog_name";
 
     private final List<PropertyMetadata<?>> sessionProperties;
 
@@ -1377,6 +1380,21 @@ public final class SystemSessionProperties
                         RANDOMIZE_OUTER_JOIN_NULL_KEY,
                         "Randomize null join key for outer join",
                         featuresConfig.isRandomizeOuterJoinNullKeyEnabled(),
+                        false),
+                stringProperty(
+                        NATIVE_EXECUTION_LOG_PATH,
+                        "The native engine log path",
+                        featuresConfig.getNativeExecutionLogPath(),
+                        false),
+                stringProperty(
+                        NATIVE_EXECUTION_CONFIG_PATH,
+                        "The native engine config path",
+                        featuresConfig.getNativeExecutionConfigPath(),
+                        false),
+                stringProperty(
+                        NATIVE_EXECUTION_CATALOG_NAME,
+                        "The native engine catalog name",
+                        featuresConfig.getNativeExecutionCatalogName(),
                         false));
     }
 
@@ -2311,6 +2329,21 @@ public final class SystemSessionProperties
     public static String getNativeExecutionExecutablePath(Session session)
     {
         return session.getSystemProperty(NATIVE_EXECUTION_EXECUTABLE_PATH, String.class);
+    }
+
+    public static String getNativeExecutionLogPath(Session session)
+    {
+        return session.getSystemProperty(NATIVE_EXECUTION_LOG_PATH, String.class);
+    }
+
+    public static String getNativeExecutionConfigPath(Session session)
+    {
+        return session.getSystemProperty(NATIVE_EXECUTION_CONFIG_PATH, String.class);
+    }
+
+    public static String getNativeExecutionCatalogName(Session session)
+    {
+        return session.getSystemProperty(NATIVE_EXECUTION_CATALOG_NAME, String.class);
     }
 
     public static boolean randomizeOuterJoinNullKeyEnabled(Session session)

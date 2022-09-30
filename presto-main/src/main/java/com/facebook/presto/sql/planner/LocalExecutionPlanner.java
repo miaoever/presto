@@ -442,48 +442,57 @@ public class LocalExecutionPlanner
 
     public LocalExecutionPlan plan(
             TaskContext taskContext,
-            PlanNode plan,
-            PartitioningScheme partitioningScheme,
-            StageExecutionDescriptor stageExecutionDescriptor,
-            List<PlanNodeId> partitionedSourceOrder,
+            PlanFragment planFragment,
             OutputBuffer outputBuffer,
             RemoteSourceFactory remoteSourceFactory,
             TableWriteInfo tableWriteInfo)
     {
         return plan(
                 taskContext,
-                plan,
-                partitioningScheme,
-                stageExecutionDescriptor,
-                partitionedSourceOrder,
-                createOutputFactory(taskContext, partitioningScheme, outputBuffer),
+                planFragment,
+                createOutputFactory(taskContext, planFragment.getPartitioningScheme(), outputBuffer),
                 remoteSourceFactory,
                 tableWriteInfo,
-                false);
+                false,
+                ImmutableList.of());
     }
 
     public LocalExecutionPlan plan(
             TaskContext taskContext,
-            PlanNode plan,
-            PartitioningScheme partitioningScheme,
-            StageExecutionDescriptor stageExecutionDescriptor,
-            List<PlanNodeId> partitionedSourceOrder,
-            OutputFactory outputFactory,
+            PlanFragment planFragment,
+            OutputBuffer outputBuffer,
             RemoteSourceFactory remoteSourceFactory,
             TableWriteInfo tableWriteInfo,
-            boolean pageSinkCommitRequired)
+            List<CustomVisitor> customVisitors)
     {
         return plan(
                 taskContext,
-                stageExecutionDescriptor,
-                plan,
-                partitioningScheme,
-                partitionedSourceOrder,
-                outputFactory,
-                createOutputPartitioning(taskContext, partitioningScheme),
+                planFragment,
+                createOutputFactory(taskContext, planFragment.getPartitioningScheme(), outputBuffer),
                 remoteSourceFactory,
                 tableWriteInfo,
-                pageSinkCommitRequired);
+                false,
+                customVisitors);
+    }
+
+    public LocalExecutionPlan plan(
+            TaskContext taskContext,
+            PlanFragment planFragment,
+            OutputFactory outputFactory,
+            RemoteSourceFactory remoteSourceFactory,
+            TableWriteInfo tableWriteInfo,
+            boolean pageSinkCommitRequired,
+            List<CustomVisitor> customVisitors)
+    {
+        return plan(
+                taskContext,
+                planFragment,
+                outputFactory,
+                createOutputPartitioning(taskContext, planFragment.getPartitioningScheme()),
+                remoteSourceFactory,
+                tableWriteInfo,
+                pageSinkCommitRequired,
+                customVisitors);
     }
 
     private OutputFactory createOutputFactory(TaskContext taskContext, PartitioningScheme partitioningScheme, OutputBuffer outputBuffer)
@@ -566,20 +575,21 @@ public class LocalExecutionPlanner
     @VisibleForTesting
     public LocalExecutionPlan plan(
             TaskContext taskContext,
-            StageExecutionDescriptor stageExecutionDescriptor,
-            PlanNode plan,
-            PartitioningScheme partitioningScheme,
-            List<PlanNodeId> partitionedSourceOrder,
+            PlanFragment planFragment,
             OutputFactory outputOperatorFactory,
             Optional<OutputPartitioning> outputPartitioning,
             RemoteSourceFactory remoteSourceFactory,
             TableWriteInfo tableWriteInfo,
-            boolean pageSinkCommitRequired)
+            boolean pageSinkCommitRequired,
+            List<CustomVisitor> customPlanVisitors)
     {
+        PartitioningScheme partitioningScheme = planFragment.getPartitioningScheme();
         List<VariableReferenceExpression> outputLayout = partitioningScheme.getOutputLayout();
         Session session = taskContext.getSession();
         LocalExecutionPlanContext context = new LocalExecutionPlanContext(taskContext, tableWriteInfo);
-        PhysicalOperation physicalOperation = plan.accept(new Visitor(session, stageExecutionDescriptor, remoteSourceFactory, pageSinkCommitRequired), context);
+        PlanNode plan = planFragment.getRoot();
+        PhysicalOperation physicalOperation = plan.accept(
+                new Visitor(session, planFragment, remoteSourceFactory, pageSinkCommitRequired, customPlanVisitors), context);
 
         Function<Page, Page> pagePreprocessor = enforceLayoutProcessor(outputLayout, physicalOperation.getLayout());
 
@@ -614,7 +624,7 @@ public class LocalExecutionPlanner
                 .map(LocalPlannerAware.class::cast)
                 .forEach(LocalPlannerAware::localPlannerComplete);
 
-        return new LocalExecutionPlan(context.getDriverFactories(), partitionedSourceOrder, stageExecutionDescriptor);
+        return new LocalExecutionPlan(context.getDriverFactories(), planFragment.getTableScanSchedulingOrder(), planFragment.getStageExecutionDescriptor());
     }
 
     private static void addLookupOuterDrivers(LocalExecutionPlanContext context)
@@ -647,7 +657,7 @@ public class LocalExecutionPlanner
         }
     }
 
-    private static class LocalExecutionPlanContext
+    public static class LocalExecutionPlanContext
     {
         private final TaskContext taskContext;
         private final List<DriverFactory> driverFactories;
@@ -736,7 +746,7 @@ public class LocalExecutionPlanner
             return nextPipelineId.getAndIncrement();
         }
 
-        private int getNextOperatorId()
+        public int getNextOperatorId()
         {
             return nextOperatorId++;
         }
@@ -831,6 +841,35 @@ public class LocalExecutionPlanner
         }
     }
 
+    public abstract static class CustomVisitor
+    {
+        protected ImmutableMap<VariableReferenceExpression, Integer> makeLayout(PlanNode node)
+        {
+            return makeLayoutFromOutputVariables(node.getOutputVariables());
+        }
+
+        private ImmutableMap<VariableReferenceExpression, Integer> makeLayoutFromOutputVariables(List<VariableReferenceExpression> outputVariables)
+        {
+            ImmutableMap.Builder<VariableReferenceExpression, Integer> outputMappings = ImmutableMap.builder();
+            int channel = 0;
+            for (VariableReferenceExpression variable : outputVariables) {
+                outputMappings.put(variable, channel);
+                channel++;
+            }
+            return outputMappings.build();
+        }
+
+        /**
+         * The implementer of this method needs to return either a PhysicalOperator if the given PlanNode is recognizable by current CustomVisitor or an Optional.empty()
+         * to indicate the translation failure. Inside the method, after the translation of the given node, the implementer can use the passed in default visitor to
+         * do future node translation.
+         */
+        public abstract Optional<PhysicalOperation> translate(
+                PlanNode node,
+                LocalExecutionPlanContext context,
+                InternalPlanVisitor<PhysicalOperation, LocalExecutionPlanContext> visitor);
+    }
+
     private class Visitor
             extends InternalPlanVisitor<PhysicalOperation, LocalExecutionPlanContext>
     {
@@ -838,13 +877,22 @@ public class LocalExecutionPlanner
         private final StageExecutionDescriptor stageExecutionDescriptor;
         private final RemoteSourceFactory remoteSourceFactory;
         private final boolean pageSinkCommitRequired;
+        private final PlanFragment fragment;
+        private final List<CustomVisitor> customPlanVisitors;
 
-        private Visitor(Session session, StageExecutionDescriptor stageExecutionDescriptor, RemoteSourceFactory remoteSourceFactory, boolean pageSinkCommitRequired)
+        private Visitor(
+                Session session,
+                PlanFragment fragment,
+                RemoteSourceFactory remoteSourceFactory,
+                boolean pageSinkCommitRequired,
+                List<CustomVisitor> customPlanVisitors)
         {
             this.session = requireNonNull(session, "session is null");
-            this.stageExecutionDescriptor = requireNonNull(stageExecutionDescriptor, "stageExecutionDescriptor is null");
+            this.fragment = requireNonNull(fragment, "fragment is null");
+            this.stageExecutionDescriptor = requireNonNull(fragment.getStageExecutionDescriptor(), "stageExecutionDescriptor is null");
             this.remoteSourceFactory = requireNonNull(remoteSourceFactory, "remoteSourceFactory is null");
             this.pageSinkCommitRequired = pageSinkCommitRequired;
+            this.customPlanVisitors = requireNonNull(customPlanVisitors, "customPlanVisitor is null");
         }
 
         @Override
@@ -2953,6 +3001,12 @@ public class LocalExecutionPlanner
         @Override
         public PhysicalOperation visitPlan(PlanNode node, LocalExecutionPlanContext context)
         {
+            for (CustomVisitor visitor : customPlanVisitors) {
+                Optional<PhysicalOperation> physicalOperation = visitor.translate(node, context, this);
+                if (physicalOperation.isPresent()) {
+                    return physicalOperation.get();
+                }
+            }
             throw new UnsupportedOperationException("not yet implemented");
         }
 
@@ -3296,7 +3350,7 @@ public class LocalExecutionPlanner
     /**
      * Encapsulates an physical operator plus the mapping of logical variables to channel/field
      */
-    private static class PhysicalOperation
+    public static class PhysicalOperation
     {
         private final List<OperatorFactory> operatorFactories;
         private final Map<VariableReferenceExpression, Integer> layout;
