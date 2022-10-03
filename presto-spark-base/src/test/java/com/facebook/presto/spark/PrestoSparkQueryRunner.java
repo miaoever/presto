@@ -52,6 +52,7 @@ import com.facebook.presto.spark.classloader_interface.PrestoSparkSession;
 import com.facebook.presto.spark.classloader_interface.PrestoSparkTaskExecutorFactoryProvider;
 import com.facebook.presto.spark.classloader_interface.RetryExecutionStrategy;
 import com.facebook.presto.spi.Plugin;
+import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.eventlistener.EventListener;
 import com.facebook.presto.spi.function.FunctionImplementationType;
 import com.facebook.presto.spi.security.PrincipalType;
@@ -79,6 +80,7 @@ import org.apache.spark.SparkContext;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.List;
@@ -93,9 +95,11 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static com.facebook.airlift.log.Level.ERROR;
 import static com.facebook.airlift.log.Level.WARN;
+import static com.facebook.presto.SystemSessionProperties.isNativeExecutionEnabled;
 import static com.facebook.presto.spark.PrestoSparkSettingsRequirements.SPARK_EXECUTOR_CORES_PROPERTY;
 import static com.facebook.presto.spark.PrestoSparkSettingsRequirements.SPARK_TASK_CPUS_PROPERTY;
 import static com.facebook.presto.spark.classloader_interface.SparkProcessType.DRIVER;
+import static com.facebook.presto.spi.StandardErrorCode.NOT_FOUND;
 import static com.facebook.presto.spi.function.RoutineCharacteristics.Language.SQL;
 import static com.facebook.presto.testing.MaterializedResult.DEFAULT_PRECISION;
 import static com.facebook.presto.testing.TestingSession.TESTING_CATALOG;
@@ -105,7 +109,6 @@ import static com.facebook.presto.tests.AbstractTestQueries.TEST_CATALOG_PROPERT
 import static com.facebook.presto.tests.AbstractTestQueries.TEST_SYSTEM_PROPERTIES;
 import static com.facebook.presto.tests.QueryAssertions.copyTpchTables;
 import static com.facebook.presto.tpch.TpchMetadata.TINY_SCHEMA_NAME;
-import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Throwables.throwIfUnchecked;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
@@ -145,7 +148,7 @@ public class PrestoSparkQueryRunner
 
     private final LifeCycleManager lifeCycleManager;
 
-    private final SparkContext sparkContext;
+    private SparkContext sparkContext;
     private final PrestoSparkService prestoSparkService;
 
     private final TestingAccessControlManager testingAccessControlManager;
@@ -157,6 +160,8 @@ public class PrestoSparkQueryRunner
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
     protected static final MetastoreContext METASTORE_CONTEXT = new MetastoreContext("test_user", "test_queryId", Optional.empty(), Optional.empty(), Optional.empty(), false, HiveColumnConverterProvider.DEFAULT_COLUMN_CONVERTER_PROVIDER);
+    private static final String SPARK_SHUFFLE_MANAGER = "spark.shuffle.manager";
+    private static final String DEFAULT_SPARK_SHUFFLE_MANAGER = "spark.default.shuffle.manager";
 
     public static PrestoSparkQueryRunner createHivePrestoSparkQueryRunner()
     {
@@ -231,6 +236,24 @@ public class PrestoSparkQueryRunner
         log.info("Imported %s rows for %s in %s", rows, tableName, nanosSince(start).convertToMostSuccinctTimeUnit());
     }
 
+    private static <T> T instantiateClass(String className, SparkConf conf, Class<T> clazz)
+    {
+        try {
+            return (T) (Class.forName(className).getConstructor(SparkConf.class).newInstance(conf));
+        }
+        catch (ClassNotFoundException | InstantiationException | IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
+            throw new PrestoException(NOT_FOUND, format("%s class not found"), e);
+        }
+    }
+
+    public static Map<String, String> getNativeExecutionShuffleConfigs()
+    {
+        Map<String, String> SparkConfigs = new HashMap<>();
+        SparkConfigs.put(SPARK_SHUFFLE_MANAGER, "com.facebook.presto.spark.classloader_interface.PrestoSparkNativeExecutionShuffleManager");
+        SparkConfigs.put(DEFAULT_SPARK_SHUFFLE_MANAGER, "org.apache.spark.shuffle.sort.SortShuffleManager");
+        return SparkConfigs;
+    }
+
     public PrestoSparkQueryRunner(String defaultCatalog, Map<String, String> additionalConfigProperties)
     {
         setupLogging();
@@ -276,7 +299,8 @@ public class PrestoSparkQueryRunner
 
         lifeCycleManager = injector.getInstance(LifeCycleManager.class);
 
-        sparkContext = sparkContextHolder.get();
+        sparkContext = isNativeExecutionEnabled(defaultSession) ? sparkContextHolder.get(getNativeExecutionShuffleConfigs()) : sparkContextHolder.get();
+
         prestoSparkService = injector.getInstance(PrestoSparkService.class);
         testingAccessControlManager = injector.getInstance(TestingAccessControlManager.class);
 
@@ -436,6 +460,37 @@ public class PrestoSparkQueryRunner
 
             throw failure;
         }
+    }
+
+    public MaterializedResult execute(Session session, SparkContext sparkContext, String sql)
+    {
+        IPrestoSparkQueryExecutionFactory executionFactory = prestoSparkService.getQueryExecutionFactory();
+        try {
+            return execute(executionFactory, sparkContext, session, sql, Optional.empty());
+        }
+        catch (PrestoSparkFailure failure) {
+            if (failure.getRetryExecutionStrategy().isPresent()) {
+                return execute(executionFactory, sparkContext, session, sql, failure.getRetryExecutionStrategy());
+            }
+
+            throw failure;
+        }
+    }
+
+    public SparkContext getSparkContext()
+    {
+        return sparkContext;
+    }
+
+    public void resetSparkContext()
+    {
+        resetSparkContext(ImmutableMap.of());
+    }
+
+    public void resetSparkContext(Map<String, String> additionalSparkConfigs)
+    {
+        sparkContextHolder.release(sparkContext);
+        sparkContext = sparkContextHolder.get(additionalSparkConfigs);
     }
 
     private MaterializedResult execute(
@@ -619,6 +674,11 @@ public class PrestoSparkQueryRunner
 
         public SparkContext get()
         {
+            return get(ImmutableMap.of());
+        }
+
+        public SparkContext get(Map<String, String> additionalSparkConfigs)
+        {
             synchronized (SparkContextHolder.class) {
                 if (sparkContext == null) {
                     SparkConf sparkConfiguration = new SparkConf()
@@ -627,6 +687,7 @@ public class PrestoSparkQueryRunner
                             .set("spark.driver.host", "localhost")
                             .set(SPARK_EXECUTOR_CORES_PROPERTY, "4")
                             .set(SPARK_TASK_CPUS_PROPERTY, "4");
+                    additionalSparkConfigs.forEach(sparkConfiguration::set);
                     PrestoSparkConfInitializer.initialize(sparkConfiguration);
                     sparkContext = new SparkContext(sparkConfiguration);
                 }
@@ -638,7 +699,7 @@ public class PrestoSparkQueryRunner
         public void release(SparkContext sparkContext)
         {
             synchronized (SparkContextHolder.class) {
-                checkState(SparkContextHolder.sparkContext == sparkContext, "unexpected spark context");
+                // checkState(SparkContextHolder.sparkContext == sparkContext, "unexpected spark context");
                 referenceCount--;
                 if (referenceCount == 0) {
                     sparkContext.cancelAllJobs();

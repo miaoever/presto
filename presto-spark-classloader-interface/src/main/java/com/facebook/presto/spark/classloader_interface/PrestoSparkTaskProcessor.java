@@ -56,7 +56,8 @@ public class PrestoSparkTaskProcessor<T extends PrestoSparkTaskOutput>
     public Iterator<Tuple2<MutablePartitionId, T>> process(
             Iterator<SerializedPrestoSparkTaskSource> serializedTaskSources,
             // fragmentId -> Iterator<[partitionId, page]>
-            Map<String, Iterator<Tuple2<MutablePartitionId, PrestoSparkMutableRow>>> shuffleInputs)
+            Map<String, Iterator<Tuple2<MutablePartitionId, PrestoSparkMutableRow>>> shuffleInputs,
+            Map<Integer, PrestoSparkShuffleDescriptor> shuffleDescriptorMap)
     {
         int partitionId = TaskContext.get().partitionId();
         int attemptNumber = TaskContext.get().attemptNumber();
@@ -66,6 +67,7 @@ public class PrestoSparkTaskProcessor<T extends PrestoSparkTaskOutput>
                 serializedTaskDescriptor,
                 serializedTaskSources,
                 new PrestoSparkTaskInputs(shuffleInputs, broadcastInputs, emptyMap()),
+                shuffleDescriptorMap,
                 taskInfoCollector,
                 shuffleStatsCollector,
                 outputType);

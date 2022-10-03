@@ -1198,6 +1198,7 @@ public class PrestoSparkQueryExecutionFactory
                         serializedTaskDescriptor,
                         emptyScalaIterator(),
                         new PrestoSparkTaskInputs(ImmutableMap.of(), ImmutableMap.of(), inputs.build()),
+                        ImmutableMap.of(),
                         taskInfoCollector,
                         shuffleStatsCollector,
                         PrestoSparkSerializedPage.class);

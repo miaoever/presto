@@ -19,9 +19,11 @@ import org.apache.spark.SparkContext;
 public class PrestoSparkConfInitializer
 {
     private static final String INITIALIZED_MARKER = "presto.spark.conf.initialized";
-
+    private static final String SPARK_SHUFFLE_MANAGER = "spark.shuffle.manager";
+    private static final String DEFAULT_SPARK_SHUFFLE_MANAGER = "spark.original.shuffle.manager";
+    
     private PrestoSparkConfInitializer() {}
-
+    
     public static void initialize(SparkConf sparkConf)
     {
         if (sparkConf.get(INITIALIZED_MARKER, null) != null) {
@@ -30,7 +32,15 @@ public class PrestoSparkConfInitializer
         registerKryoClasses(sparkConf);
         sparkConf.set(INITIALIZED_MARKER, "true");
     }
-
+    
+    public static void turnOnNativeExecutionShuffle(SparkContext context)
+    {
+        SparkConf sparkConf = context.conf();
+        String defaultShuffleManager = sparkConf.get(SPARK_SHUFFLE_MANAGER, "sort");
+        sparkConf.set(SPARK_SHUFFLE_MANAGER, "com.facebook.presto.spark.execution.PrestoSparkNativeExecutionShuffleManager");
+        sparkConf.set(DEFAULT_SPARK_SHUFFLE_MANAGER, defaultShuffleManager);
+    }
+    
     private static void registerKryoClasses(SparkConf sparkConf)
     {
         sparkConf.registerKryoClasses(new Class[] {
@@ -44,7 +54,7 @@ public class PrestoSparkConfInitializer
                 SerializedPrestoSparkTaskSource.class
         });
     }
-
+    
     public static void checkInitialized(SparkContext sparkContext)
     {
         SparkConf sparkConf = sparkContext.getConf();

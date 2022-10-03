@@ -19,6 +19,7 @@ import com.facebook.presto.tests.AbstractTestQueryFramework;
 import org.testng.annotations.Test;
 
 import static com.facebook.presto.SystemSessionProperties.NATIVE_EXECUTION_ENABLED;
+import static com.facebook.presto.spark.PrestoSparkQueryRunner.getNativeExecutionShuffleConfigs;
 
 public class TestPrestoSparkNativeExecution
         extends AbstractTestQueryFramework
@@ -41,5 +42,21 @@ public class TestPrestoSparkNativeExecution
 
         // Expecting 0 row updated since currently the NativeExecutionOperator is dummy.
         assertUpdate(session, "CREATE TABLE test_tablescan as SELECT orderkey, custkey FROM orders", 0);
+    }
+
+    @Test
+    public void testNativeExecutionWithShuffle()
+    {
+        Session session = Session.builder(getSession())
+                .setSystemProperty(NATIVE_EXECUTION_ENABLED, "true")
+                .setSystemProperty("table_writer_merge_operator_enabled", "false")
+                .setCatalogSessionProperty("hive", "collect_column_statistics_on_write", "false")
+                .build();
+
+        PrestoSparkQueryRunner queryRunner = (PrestoSparkQueryRunner) getQueryRunner();
+        queryRunner.resetSparkContext(getNativeExecutionShuffleConfigs());
+        // Expecting 0 row updated since currently the NativeExecutionOperator is dummy.
+        queryRunner.execute(session, "CREATE TABLE test_aggregate as SELECT  partkey, count(*) c FROM lineitem WHERE partkey % 10 = 1 GROUP BY partkey");
+        //assertUpdate(session, "CREATE TABLE test_aggregate as SELECT  partkey, count(*) c FROM lineitem WHERE partkey % 10 = 1 GROUP BY partkey", 0);
     }
 }

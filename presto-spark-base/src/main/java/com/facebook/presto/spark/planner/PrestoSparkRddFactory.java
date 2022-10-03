@@ -254,7 +254,12 @@ public class PrestoSparkRddFactory
         }
 
         return JavaPairRDD.fromRDD(
-                PrestoSparkTaskRdd.create(sparkContext.sc(), taskSourceRdd, shuffleInputRddMap, taskProcessor).setName(getRDDName(fragment.getId().getId())),
+                PrestoSparkTaskRdd.create(
+                        sparkContext.sc(),
+                        taskSourceRdd,
+                        shuffleInputRddMap,
+                        taskProcessor,
+                        isNativeExecutionEnabled(session)).setName(getRDDName(fragment.getId().getId())),
                 classTag(MutablePartitionId.class),
                 classTag(outputType));
     }

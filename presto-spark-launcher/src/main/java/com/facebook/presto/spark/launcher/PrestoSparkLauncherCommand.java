@@ -36,29 +36,32 @@ public class PrestoSparkLauncherCommand
 {
     @Inject
     public HelpOption helpOption;
-
+    
     @Inject
     public PrestoSparkVersionOption versionOption = new PrestoSparkVersionOption();
-
+    
     @Inject
     public PrestoSparkClientOptions clientOptions = new PrestoSparkClientOptions();
-
+    
     public void run()
     {
         SparkConf sparkConfiguration = new SparkConf()
                 .setAppName("Presto");
         PrestoSparkConfInitializer.initialize(sparkConfiguration);
         SparkContext sparkContext = new SparkContext(sparkConfiguration);
-
+        
         TargzBasedPackageSupplier packageSupplier = new TargzBasedPackageSupplier(new File(clientOptions.packagePath));
         packageSupplier.deploy(sparkContext);
-
+        
         Optional<Map<String, String>> sessionPropertyConfigurationProperties;
         if (clientOptions.sessionPropertyConfig == null) {
             sessionPropertyConfigurationProperties = Optional.empty();
         }
         else {
             sessionPropertyConfigurationProperties = Optional.of(loadProperties(checkFile(new File(clientOptions.sessionPropertyConfig))));
+            if (sessionPropertyConfigurationProperties.get().getOrDefault("native_execution_enabled", "false").equals("true")) {
+                PrestoSparkConfInitializer.turnOnNativeExecutionShuffle(sparkContext);
+            }
         }
         PrestoSparkDistribution distribution = new PrestoSparkDistribution(
                 sparkContext,
@@ -71,7 +74,7 @@ public class PrestoSparkLauncherCommand
                 sessionPropertyConfigurationProperties,
                 Optional.empty(),
                 Optional.empty());
-
+        
         try (PrestoSparkRunner runner = new PrestoSparkRunner(distribution)) {
             runner.run(
                     "test",

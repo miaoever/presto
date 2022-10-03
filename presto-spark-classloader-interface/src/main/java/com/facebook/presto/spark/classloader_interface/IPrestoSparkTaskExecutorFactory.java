@@ -16,6 +16,8 @@ package com.facebook.presto.spark.classloader_interface;
 import org.apache.spark.util.CollectionAccumulator;
 import scala.collection.Iterator;
 
+import java.util.Map;
+
 public interface IPrestoSparkTaskExecutorFactory
 {
     <T extends PrestoSparkTaskOutput> IPrestoSparkTaskExecutor<T> create(
@@ -24,6 +26,7 @@ public interface IPrestoSparkTaskExecutorFactory
             SerializedPrestoSparkTaskDescriptor taskDescriptor,
             Iterator<SerializedPrestoSparkTaskSource> serializedTaskSources,
             PrestoSparkTaskInputs inputs,
+            Map<Integer, PrestoSparkShuffleDescriptor> shuffleDescriptorMap,
             CollectionAccumulator<SerializedTaskInfo> taskInfoCollector,
             CollectionAccumulator<PrestoSparkShuffleStats> shuffleStatsCollector,
             Class<T> outputType);

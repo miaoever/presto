@@ -56,6 +56,7 @@ import com.facebook.presto.spark.classloader_interface.IPrestoSparkTaskExecutorF
 import com.facebook.presto.spark.classloader_interface.MutablePartitionId;
 import com.facebook.presto.spark.classloader_interface.PrestoSparkMutableRow;
 import com.facebook.presto.spark.classloader_interface.PrestoSparkSerializedPage;
+import com.facebook.presto.spark.classloader_interface.PrestoSparkShuffleDescriptor;
 import com.facebook.presto.spark.classloader_interface.PrestoSparkShuffleStats;
 import com.facebook.presto.spark.classloader_interface.PrestoSparkStorageHandle;
 import com.facebook.presto.spark.classloader_interface.PrestoSparkTaskInputs;
@@ -67,7 +68,6 @@ import com.facebook.presto.spark.execution.PrestoSparkPageOutputOperator.PrestoS
 import com.facebook.presto.spark.execution.PrestoSparkRowBatch.RowTupleSupplier;
 import com.facebook.presto.spark.execution.PrestoSparkRowOutputOperator.PreDeterminedPartitionFunction;
 import com.facebook.presto.spark.execution.PrestoSparkRowOutputOperator.PrestoSparkRowOutputFactory;
-import com.facebook.presto.spark.planner.PrestoSparkLocalExecutionPlanner;
 import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.memory.MemoryPoolId;
 import com.facebook.presto.spi.page.PageDataOutput;
@@ -79,6 +79,7 @@ import com.facebook.presto.spi.storage.TempStorage;
 import com.facebook.presto.spi.storage.TempStorageHandle;
 import com.facebook.presto.spiller.NodeSpillConfig;
 import com.facebook.presto.spiller.SpillSpaceTracker;
+import com.facebook.presto.sql.planner.LocalExecutionPlanner;
 import com.facebook.presto.sql.planner.LocalExecutionPlanner.LocalExecutionPlan;
 import com.facebook.presto.sql.planner.OutputPartitioning;
 import com.facebook.presto.sql.planner.PlanFragment;
@@ -106,6 +107,7 @@ import java.net.URI;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -177,7 +179,7 @@ public class PrestoSparkTaskExecutorFactory
     private final ScheduledExecutorService memoryUpdateExecutor;
     private final ExecutorService memoryRevocationExecutor;
 
-    private final PrestoSparkLocalExecutionPlanner localExecutionPlanner;
+    private final LocalExecutionPlanner localExecutionPlanner;
     private final PrestoSparkExecutionExceptionFactory executionExceptionFactory;
     private final TaskExecutor taskExecutor;
     private final SplitMonitor splitMonitor;
@@ -213,7 +215,7 @@ public class PrestoSparkTaskExecutorFactory
             ScheduledExecutorService yieldExecutor,
             ScheduledExecutorService memoryUpdateExecutor,
             ExecutorService memoryRevocationExecutor,
-            PrestoSparkLocalExecutionPlanner localExecutionPlanner,
+            LocalExecutionPlanner localExecutionPlanner,
             PrestoSparkExecutionExceptionFactory executionExceptionFactory,
             TaskExecutor taskExecutor,
             SplitMonitor splitMonitor,
@@ -266,7 +268,7 @@ public class PrestoSparkTaskExecutorFactory
             ScheduledExecutorService yieldExecutor,
             ScheduledExecutorService memoryUpdateExecutor,
             ExecutorService memoryRevocationExecutor,
-            PrestoSparkLocalExecutionPlanner localExecutionPlanner,
+            LocalExecutionPlanner localExecutionPlanner,
             PrestoSparkExecutionExceptionFactory executionExceptionFactory,
             TaskExecutor taskExecutor,
             SplitMonitor splitMonitor,
@@ -318,6 +320,7 @@ public class PrestoSparkTaskExecutorFactory
             SerializedPrestoSparkTaskDescriptor serializedTaskDescriptor,
             Iterator<SerializedPrestoSparkTaskSource> serializedTaskSources,
             PrestoSparkTaskInputs inputs,
+            Map<Integer, PrestoSparkShuffleDescriptor> shuffleDescriptorMap,
             CollectionAccumulator<SerializedTaskInfo> taskInfoCollector,
             CollectionAccumulator<PrestoSparkShuffleStats> shuffleStatsCollector,
             Class<T> outputType)
@@ -329,6 +332,7 @@ public class PrestoSparkTaskExecutorFactory
                     serializedTaskDescriptor,
                     serializedTaskSources,
                     inputs,
+                    shuffleDescriptorMap,
                     taskInfoCollector,
                     shuffleStatsCollector,
                     outputType);
@@ -344,6 +348,7 @@ public class PrestoSparkTaskExecutorFactory
             SerializedPrestoSparkTaskDescriptor serializedTaskDescriptor,
             Iterator<SerializedPrestoSparkTaskSource> serializedTaskSources,
             PrestoSparkTaskInputs inputs,
+            Map<Integer, PrestoSparkShuffleDescriptor> shuffleDescriptorMap,
             CollectionAccumulator<SerializedTaskInfo> taskInfoCollector,
             CollectionAccumulator<PrestoSparkShuffleStats> shuffleStatsCollector,
             Class<T> outputType)
