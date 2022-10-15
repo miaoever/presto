@@ -13,8 +13,11 @@
  */
 package com.facebook.presto.execution;
 
+import com.facebook.airlift.http.client.testing.TestingHttpClient;
+import com.facebook.airlift.http.client.testing.TestingResponse;
 import com.facebook.airlift.json.JsonObjectMapperProvider;
 import com.facebook.presto.Session;
+import com.facebook.presto.client.ServerInfo;
 import com.facebook.presto.common.block.BlockEncodingManager;
 import com.facebook.presto.common.predicate.TupleDomain;
 import com.facebook.presto.cost.StatsAndCosts;
@@ -40,7 +43,9 @@ import com.facebook.presto.operator.PagesIndex;
 import com.facebook.presto.operator.StageExecutionDescriptor;
 import com.facebook.presto.operator.TableCommitContext;
 import com.facebook.presto.operator.index.IndexJoinLookupStats;
+import com.facebook.presto.operator.nativeexecution.NativeExecutionProcessFactory;
 import com.facebook.presto.security.AllowAllAccessControl;
+import com.facebook.presto.server.TaskUpdateRequest;
 import com.facebook.presto.spi.ConnectorId;
 import com.facebook.presto.spi.TableHandle;
 import com.facebook.presto.spi.WarningCollector;
@@ -74,6 +79,7 @@ import com.facebook.presto.transaction.TransactionManager;
 import com.facebook.presto.ttl.nodettlfetchermanagers.ThrowingNodeTtlFetcherManager;
 import com.facebook.presto.util.FinalizerService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -83,11 +89,16 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Executor;
 
+import static com.facebook.airlift.concurrent.Threads.daemonThreadsNamed;
+import static com.facebook.airlift.http.client.HttpStatus.OK;
 import static com.facebook.airlift.json.JsonCodec.jsonCodec;
 import static com.facebook.presto.SessionTestUtils.TEST_SESSION;
 import static com.facebook.presto.common.type.BigintType.BIGINT;
+import static com.facebook.presto.spi.NodeState.ACTIVE;
 import static com.facebook.presto.sql.planner.SystemPartitioningHandle.SINGLE_DISTRIBUTION;
 import static com.facebook.presto.sql.planner.SystemPartitioningHandle.SOURCE_DISTRIBUTION;
+import static java.util.concurrent.Executors.newCachedThreadPool;
+import static java.util.concurrent.Executors.newScheduledThreadPool;
 
 public final class TaskTestUtils
 {
@@ -190,9 +201,15 @@ public final class TaskTestUtils
                 (session) -> {
                     throw new UnsupportedOperationException();
                 },
-                jsonCodec(TaskSource.class),
-                jsonCodec(TableWriteInfo.class),
-                jsonCodec(PlanFragment.class));
+                new NativeExecutionProcessFactory(
+                        new TestingHttpClient(input -> new TestingResponse(OK, ArrayListMultimap.create(), ACTIVE.name().getBytes())),
+                        newCachedThreadPool(daemonThreadsNamed("native-execution-task-executor-%s")),
+                        newScheduledThreadPool(1, daemonThreadsNamed("native-execution-task-scheduler-%s")),
+                        newScheduledThreadPool(1, daemonThreadsNamed("native-execution-task-scheduler-%s")),
+                        jsonCodec(TaskInfo.class),
+                        jsonCodec(PlanFragment.class),
+                        jsonCodec(TaskUpdateRequest.class),
+                        jsonCodec(ServerInfo.class)));
     }
 
     public static TaskInfo updateTask(SqlTask sqlTask, List<TaskSource> taskSources, OutputBuffers outputBuffers)

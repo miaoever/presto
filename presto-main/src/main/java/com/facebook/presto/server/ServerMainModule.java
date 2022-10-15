@@ -39,6 +39,7 @@ import com.facebook.presto.common.block.Block;
 import com.facebook.presto.common.block.BlockEncoding;
 import com.facebook.presto.common.block.BlockEncodingManager;
 import com.facebook.presto.common.block.BlockEncodingSerde;
+import com.facebook.presto.common.block.ByteArrayBlock;
 import com.facebook.presto.common.type.Type;
 import com.facebook.presto.common.type.TypeManager;
 import com.facebook.presto.connector.ConnectorManager;
@@ -121,6 +122,7 @@ import com.facebook.presto.operator.PagesIndex;
 import com.facebook.presto.operator.TableCommitContext;
 import com.facebook.presto.operator.TaskMemoryReservationSummary;
 import com.facebook.presto.operator.index.IndexJoinLookupStats;
+import com.facebook.presto.operator.nativeexecution.NativeExecutionProcessFactory;
 import com.facebook.presto.resourcemanager.ClusterMemoryManagerService;
 import com.facebook.presto.resourcemanager.ClusterStatusSender;
 import com.facebook.presto.resourcemanager.ForResourceManager;
@@ -145,9 +147,11 @@ import com.facebook.presto.spi.ConnectorTypeSerde;
 import com.facebook.presto.spi.PageIndexerFactory;
 import com.facebook.presto.spi.PageSorter;
 import com.facebook.presto.spi.function.SqlInvokedFunction;
+import com.facebook.presto.spi.relation.ConstantExpression;
 import com.facebook.presto.spi.relation.DeterminismEvaluator;
 import com.facebook.presto.spi.relation.DomainTranslator;
 import com.facebook.presto.spi.relation.PredicateCompiler;
+import com.facebook.presto.spi.relation.RowExpression;
 import com.facebook.presto.spi.relation.VariableReferenceExpression;
 import com.facebook.presto.spi.tracing.TracerProvider;
 import com.facebook.presto.spiller.FileSingleStreamSpillerFactory;
@@ -204,6 +208,7 @@ import com.facebook.presto.util.FinalizerService;
 import com.facebook.presto.util.GcStatusMonitor;
 import com.facebook.presto.version.EmbedVersion;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ser.std.ByteArraySerializer;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.inject.Binder;
@@ -493,6 +498,7 @@ public class ServerMainModule
         newExporter(binder).export(OrderingCompiler.class).withGeneratedName();
         binder.bind(PagesIndex.Factory.class).to(PagesIndex.DefaultFactory.class);
         binder.bind(LookupJoinOperators.class).in(Scopes.SINGLETON);
+        binder.bind(NativeExecutionProcessFactory.class).in(Scopes.SINGLETON);
 
         jsonCodecBinder(binder).bindJsonCodec(TaskStatus.class);
         jsonCodecBinder(binder).bindJsonCodec(StageInfo.class);
@@ -687,6 +693,11 @@ public class ServerMainModule
         newSetBinder(binder, BlockEncoding.class);
         jsonBinder(binder).addSerializerBinding(Block.class).to(BlockJsonSerde.Serializer.class);
         jsonBinder(binder).addDeserializerBinding(Block.class).to(BlockJsonSerde.Deserializer.class);
+        jsonBinder(binder).addSerializerBinding(ByteArrayBlock.class).to(ByteArraySerializer.class);
+        jsonBinder(binder).addSerializerBinding(RowExpression.class).to(BlockJsonSerde.Serializer.class);
+        jsonBinder(binder).addSerializerBinding(ConstantExpression.class).to(BlockJsonSerde.Serializer.class);
+        jsonCodecBinder(binder).bindJsonCodec(RowExpression.class);
+        jsonCodecBinder(binder).bindJsonCodec(ByteArrayBlock.class);
 
         // thread visualizer
         jaxrsBinder(binder).bind(ThreadResource.class);

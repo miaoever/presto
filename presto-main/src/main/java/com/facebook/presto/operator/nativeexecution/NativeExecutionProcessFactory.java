@@ -11,15 +11,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.spark.execution;
+package com.facebook.presto.operator.nativeexecution;
 
 import com.facebook.airlift.concurrent.BoundedExecutor;
 import com.facebook.airlift.http.client.HttpClient;
+import com.facebook.airlift.json.JsonCodec;
 import com.facebook.presto.Session;
+import com.facebook.presto.client.ServerInfo;
 import com.facebook.presto.execution.TaskId;
+import com.facebook.presto.execution.TaskInfo;
 import com.facebook.presto.execution.TaskSource;
 import com.facebook.presto.execution.scheduler.TableWriteInfo;
+import com.facebook.presto.operator.NativeExecutionProcess;
+import com.facebook.presto.server.TaskUpdateRequest;
 import com.facebook.presto.sql.planner.PlanFragment;
+import io.airlift.units.Duration;
 
 import javax.annotation.PreDestroy;
 import javax.inject.Inject;
@@ -31,8 +37,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 
 import static java.util.Objects.requireNonNull;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
-public class NativeExecutionTaskFactory
+public class NativeExecutionProcessFactory
 {
     // TODO add config
     private static final int MAX_THREADS = 1000;
@@ -41,17 +48,31 @@ public class NativeExecutionTaskFactory
     private final ExecutorService coreExecutor;
     private final Executor executor;
     private final ScheduledExecutorService updateScheduledExecutor;
+    private final ScheduledExecutorService errorScheduledExecutor;
+    private final JsonCodec<TaskInfo> taskInfoCodec;
+    private final JsonCodec<PlanFragment> planFragmentCodec;
+    private final JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec;
+    private final JsonCodec<ServerInfo> serverInfoCodec;
 
     @Inject
-    public NativeExecutionTaskFactory(
+    public NativeExecutionProcessFactory(
             @ForNativeExecutionTask HttpClient httpClient,
             ExecutorService coreExecutor,
-            ScheduledExecutorService updateScheduledExecutor)
+            ScheduledExecutorService updateScheduledExecutor,
+            ScheduledExecutorService errorScheduledExecutor,
+            JsonCodec<TaskInfo> taskInfoCodec,
+            JsonCodec<PlanFragment> planFragmentCodec,
+            JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec,
+            JsonCodec<ServerInfo> serverInfoCodec)
     {
         requireNonNull(httpClient, "httpClient is null");
         requireNonNull(coreExecutor, "coreExecutor is null");
         requireNonNull(updateScheduledExecutor, "updateScheduledExecutor is null");
-
+        this.taskInfoCodec = requireNonNull(taskInfoCodec, "taskInfoCodec is null");
+        this.planFragmentCodec = requireNonNull(planFragmentCodec, "planFragmentCodec is null");
+        this.taskUpdateRequestCodec = requireNonNull(taskUpdateRequestCodec, "taskUpdateRequestCodec is null");
+        this.serverInfoCodec = requireNonNull(serverInfoCodec, "serviceInfoCodec is null");
+        this.errorScheduledExecutor = errorScheduledExecutor;
         this.httpClient = httpClient;
         this.coreExecutor = coreExecutor;
         this.executor = new BoundedExecutor(coreExecutor, MAX_THREADS);
@@ -75,7 +96,18 @@ public class NativeExecutionTaskFactory
                 httpClient,
                 tableWriteInfo,
                 executor,
-                updateScheduledExecutor);
+                updateScheduledExecutor,
+                taskInfoCodec,
+                planFragmentCodec,
+                taskUpdateRequestCodec,
+                serverInfoCodec);
+    }
+
+    public NativeExecutionProcess createNativeExecutionProcess(
+            Session session,
+            URI location)
+    {
+        return new NativeExecutionProcess(session, location, httpClient, new Duration(120, SECONDS), errorScheduledExecutor, serverInfoCodec);
     }
 
     @PreDestroy

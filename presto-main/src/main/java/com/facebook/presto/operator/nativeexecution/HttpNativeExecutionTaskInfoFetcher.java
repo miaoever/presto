@@ -11,12 +11,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.spark.execution;
+package com.facebook.presto.operator.nativeexecution;
 
 import com.facebook.airlift.log.Logger;
 import com.facebook.presto.execution.TaskInfo;
 import com.facebook.presto.server.smile.BaseResponse;
-import com.facebook.presto.spark.execution.http.PrestoSparkHttpWorkerClient;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;

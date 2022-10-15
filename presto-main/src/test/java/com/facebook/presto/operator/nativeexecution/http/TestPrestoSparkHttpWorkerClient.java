@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.spark.execution.http;
+package com.facebook.presto.operator.nativeexecution.http;
 
 import com.facebook.airlift.http.client.HeaderName;
 import com.facebook.airlift.http.client.HttpClient;
@@ -21,6 +21,7 @@ import com.facebook.airlift.http.client.RequestStats;
 import com.facebook.airlift.http.client.Response;
 import com.facebook.airlift.http.client.ResponseHandler;
 import com.facebook.airlift.json.JsonCodec;
+import com.facebook.presto.client.ServerInfo;
 import com.facebook.presto.execution.ScheduledSplit;
 import com.facebook.presto.execution.TaskId;
 import com.facebook.presto.execution.TaskInfo;
@@ -28,14 +29,17 @@ import com.facebook.presto.execution.TaskSource;
 import com.facebook.presto.execution.scheduler.TableWriteInfo;
 import com.facebook.presto.operator.PageBufferClient;
 import com.facebook.presto.operator.TaskStats;
+import com.facebook.presto.operator.nativeexecution.HttpNativeExecutionTaskInfoFetcher;
+import com.facebook.presto.operator.nativeexecution.HttpNativeExecutionTaskResultFetcher;
+import com.facebook.presto.operator.nativeexecution.NativeExecutionProcessFactory;
+import com.facebook.presto.operator.nativeexecution.NativeExecutionTask;
+import com.facebook.presto.operator.nativeexecution.PrestoSparkHttpWorkerClient;
+import com.facebook.presto.server.TaskUpdateRequest;
 import com.facebook.presto.server.smile.BaseResponse;
-import com.facebook.presto.spark.execution.HttpNativeExecutionTaskInfoFetcher;
-import com.facebook.presto.spark.execution.HttpNativeExecutionTaskResultFetcher;
-import com.facebook.presto.spark.execution.NativeExecutionTask;
-import com.facebook.presto.spark.execution.NativeExecutionTaskFactory;
 import com.facebook.presto.spi.page.PageCodecMarker;
 import com.facebook.presto.spi.page.PagesSerdeUtil;
 import com.facebook.presto.spi.page.SerializedPage;
+import com.facebook.presto.sql.planner.PlanFragment;
 import com.facebook.presto.testing.TestingSession;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
@@ -65,6 +69,7 @@ import java.util.regex.Pattern;
 
 import static com.facebook.airlift.http.client.HttpUriBuilder.uriBuilder;
 import static com.facebook.airlift.http.client.HttpUriBuilder.uriBuilderFrom;
+import static com.facebook.airlift.json.JsonCodec.jsonCodec;
 import static com.facebook.presto.PrestoMediaTypes.PRESTO_PAGES_TYPE;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_BUFFER_COMPLETE;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_PAGE_NEXT_TOKEN;
@@ -74,7 +79,7 @@ import static com.facebook.presto.execution.TaskTestUtils.SPLIT;
 import static com.facebook.presto.execution.TaskTestUtils.createPlanFragment;
 import static com.facebook.presto.execution.buffer.OutputBuffers.BufferType.PARTITIONED;
 import static com.facebook.presto.execution.buffer.OutputBuffers.createInitialEmptyOutputBuffers;
-import static com.facebook.presto.spark.execution.HttpNativeExecutionTaskInfoFetcher.GET_TASK_INFO_INTERVALS;
+import static com.facebook.presto.operator.nativeexecution.HttpNativeExecutionTaskInfoFetcher.GET_TASK_INFO_INTERVALS;
 import static com.facebook.presto.testing.TestingSession.testSessionBuilder;
 import static com.google.common.net.HttpHeaders.CONTENT_TYPE;
 import static io.airlift.slice.Slices.EMPTY_SLICE;
@@ -105,7 +110,7 @@ public class TestPrestoSparkHttpWorkerClient
                 0,
                 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri, jsonCodec(TaskInfo.class), jsonCodec(PlanFragment.class), jsonCodec(TaskUpdateRequest.class));
         ListenableFuture<PageBufferClient.PagesResponse> future = workerClient.getResults(
                 0,
                 new DataSize(32, DataSize.Unit.MEGABYTE));
@@ -126,7 +131,8 @@ public class TestPrestoSparkHttpWorkerClient
     {
         TaskId taskId = new TaskId("testid", 0, 0, 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri, jsonCodec(TaskInfo.class), jsonCodec(PlanFragment.class), jsonCodec(TaskUpdateRequest.class));
+        ;
         workerClient.acknowledgeResultsAsync(1);
     }
 
@@ -135,7 +141,8 @@ public class TestPrestoSparkHttpWorkerClient
     {
         TaskId taskId = new TaskId("testid", 0, 0, 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri, jsonCodec(TaskInfo.class), jsonCodec(PlanFragment.class), jsonCodec(TaskUpdateRequest.class));
+        ;
         ListenableFuture<?> future = workerClient.abortResults();
         try {
             future.get();
@@ -151,7 +158,8 @@ public class TestPrestoSparkHttpWorkerClient
     {
         TaskId taskId = new TaskId("testid", 0, 0, 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri, jsonCodec(TaskInfo.class), jsonCodec(PlanFragment.class), jsonCodec(TaskUpdateRequest.class));
+        ;
         ListenableFuture<BaseResponse<TaskInfo>> future = workerClient.getTaskInfo();
         try {
             TaskInfo taskInfo = future.get().getValue();
@@ -168,7 +176,8 @@ public class TestPrestoSparkHttpWorkerClient
     {
         TaskId taskId = new TaskId("testid", 0, 0, 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri, jsonCodec(TaskInfo.class), jsonCodec(PlanFragment.class), jsonCodec(TaskUpdateRequest.class));
+        ;
 
         Set<ScheduledSplit> splits = new HashSet<>();
         splits.add(SPLIT);
@@ -195,7 +204,8 @@ public class TestPrestoSparkHttpWorkerClient
     {
         TaskId taskId = new TaskId("testid", 0, 0, 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri, jsonCodec(TaskInfo.class), jsonCodec(PlanFragment.class), jsonCodec(TaskUpdateRequest.class));
+        ;
         HttpNativeExecutionTaskResultFetcher taskResultFetcher = new HttpNativeExecutionTaskResultFetcher(
                 newScheduledThreadPool(1),
                 workerClient,
@@ -228,7 +238,7 @@ public class TestPrestoSparkHttpWorkerClient
         PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(
                 new TestingHttpClient(new Duration(500, TimeUnit.MILLISECONDS)),
                 taskId,
-                uri);
+                uri, jsonCodec(TaskInfo.class), jsonCodec(PlanFragment.class), jsonCodec(TaskUpdateRequest.class));
         HttpNativeExecutionTaskResultFetcher taskResultFetcher = new HttpNativeExecutionTaskResultFetcher(
                 newScheduledThreadPool(1),
                 workerClient,
@@ -242,7 +252,7 @@ public class TestPrestoSparkHttpWorkerClient
     {
         TaskId taskId = new TaskId("testid", 0, 0, 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri, jsonCodec(TaskInfo.class), jsonCodec(PlanFragment.class), jsonCodec(TaskUpdateRequest.class));
         HttpNativeExecutionTaskInfoFetcher taskInfoFetcher = new HttpNativeExecutionTaskInfoFetcher(
                 newScheduledThreadPool(1),
                 workerClient,
@@ -266,11 +276,12 @@ public class TestPrestoSparkHttpWorkerClient
         // Otherwise async execution assumption is not going to hold with a
         // single thread.
         ScheduledExecutorService scheduler = newScheduledThreadPool(4);
+        ScheduledExecutorService scheduler2 = newScheduledThreadPool(4);
         TaskId taskId = new TaskId("testid", 0, 0, 0);
-        NativeExecutionTaskFactory factory = new NativeExecutionTaskFactory(
+        NativeExecutionProcessFactory factory = new NativeExecutionProcessFactory(
                 new TestingHttpClient(NO_DURATION),
                 newSingleThreadExecutor(),
-                scheduler);
+                scheduler, scheduler2, jsonCodec(TaskInfo.class), jsonCodec(PlanFragment.class), jsonCodec(TaskUpdateRequest.class), jsonCodec((ServerInfo.class)));
         List<TaskSource> sources = new ArrayList<>();
         NativeExecutionTask task = factory.createNativeExecutionTask(
                 testSessionBuilder().build(),
@@ -369,7 +380,8 @@ public class TestPrestoSparkHttpWorkerClient
         }
 
         @Override
-        public <T, E extends Exception> T execute(Request request, ResponseHandler<T, E> responseHandler) throws E
+        public <T, E extends Exception> T execute(Request request, ResponseHandler<T, E> responseHandler)
+                throws E
         {
             try {
                 return executeAsync(request, responseHandler).get();

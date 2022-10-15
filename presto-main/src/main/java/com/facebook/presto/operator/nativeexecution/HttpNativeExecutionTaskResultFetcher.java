@@ -11,10 +11,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.spark.execution;
+package com.facebook.presto.operator.nativeexecution;
 
 import com.facebook.presto.operator.PageBufferClient;
-import com.facebook.presto.spark.execution.http.PrestoSparkHttpWorkerClient;
 import com.facebook.presto.spi.HostAddress;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.page.SerializedPage;
@@ -174,8 +173,8 @@ public class HttpNativeExecutionTaskResultFetcher
                     return;
                 }
                 PageBufferClient.PagesResponse pagesResponse = client.getResults(
-                        token,
-                        MAX_RESPONSE_SIZE)
+                                token,
+                                MAX_RESPONSE_SIZE)
                         .get((long) requestTimeout.getValue(), requestTimeout.getUnit());
 
                 List<SerializedPage> pages = pagesResponse.getPages();

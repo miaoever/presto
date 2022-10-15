@@ -19,15 +19,22 @@ import com.facebook.presto.execution.TaskSource;
 import com.facebook.presto.execution.buffer.PagesSerdeFactory;
 import com.facebook.presto.execution.scheduler.TableWriteInfo;
 import com.facebook.presto.memory.context.LocalMemoryContext;
+import com.facebook.presto.operator.nativeexecution.NativeExecutionProcessFactory;
+import com.facebook.presto.operator.nativeexecution.NativeExecutionTask;
 import com.facebook.presto.spi.UpdatablePageSource;
 import com.facebook.presto.spi.page.PagesSerde;
+import com.facebook.presto.spi.page.SerializedPage;
 import com.facebook.presto.spi.plan.PlanNodeId;
 import com.facebook.presto.sql.planner.PlanFragment;
 import com.google.common.base.Suppliers;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
+import java.net.URI;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.function.Supplier;
 
 import static com.google.common.base.Preconditions.checkState;
@@ -51,6 +58,12 @@ public class NativeExecutionOperator
     private final PlanFragment planFragment;
     private final TableWriteInfo tableWriteInfo;
     private final PagesSerde serde;
+    private final NativeExecutionProcess process;
+    private final NativeExecutionProcessFactory taskFactory;
+    private static final String NATIVE_EXECUTION_TASK_URI = "http://127.0.0.1:7777/v1/task/";
+    private static final String NATIVE_EXECUTION_SERVER_URI = "http://127.0.0.1:7777/v1/info";
+    private NativeExecutionTask task;
+    private CompletableFuture<Void> taskStatusFuture;
     private TaskSource taskSource;
     private boolean finished;
 
@@ -59,14 +72,30 @@ public class NativeExecutionOperator
             OperatorContext operatorContext,
             PlanFragment planFragment,
             TableWriteInfo tableWriteInfo,
-            PagesSerde serde)
+            PagesSerde serde,
+            NativeExecutionProcess process,
+            NativeExecutionProcessFactory taskFactory)
     {
         this.sourceId = requireNonNull(sourceId, "sourceId is null");
         this.operatorContext = requireNonNull(operatorContext, "operatorContext is null");
         this.systemMemoryContext = operatorContext.localSystemMemoryContext();
         this.planFragment = requireNonNull(planFragment, "planFragment is null");
         this.tableWriteInfo = requireNonNull(tableWriteInfo, "tableWriteInfo is null");
-        this.serde = requireNonNull(serde, "serde is null");
+        this.process = requireNonNull(process, "process is null");
+        this.taskFactory = requireNonNull(taskFactory, "taskFactory is null");
+        this.taskSource = null;
+        this.finished = false;
+        this.serde = serde;
+
+        try {
+            this.process.start();
+        }
+        catch (ExecutionException e) {
+            throw new RuntimeException(e);
+        }
+        catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Override
@@ -97,8 +126,55 @@ public class NativeExecutionOperator
     @Override
     public Page getOutput()
     {
-        finished = true;
-        return null;
+        if (finished) {
+            return null;
+        }
+
+        if (task == null) {
+            checkState(taskSource != null, "taskSource is null");
+            checkState(taskStatusFuture == null, "taskStatusFuture has already been set");
+
+            this.task = taskFactory.createNativeExecutionTask(
+                    operatorContext.getSession(),
+                    URI.create(NATIVE_EXECUTION_TASK_URI),
+                    operatorContext.getDriverContext().getTaskId(),
+                    planFragment,
+                    ImmutableList.of(taskSource),
+                    tableWriteInfo);
+            taskStatusFuture = task.start();
+        }
+
+        try {
+            if (taskStatusFuture.isDone()) {
+                Optional<SerializedPage> page = task.pollResult();
+                if (page.isPresent()) {
+                    return processResult(page.get());
+                }
+                else {
+                    finished = true;
+                    return null;
+                }
+            }
+
+            Optional<SerializedPage> page = task.pollResult();
+            if (page.isPresent()) {
+                return processResult(page.get());
+            }
+            else {
+                return null;
+            }
+        }
+        catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private Page processResult(SerializedPage page)
+    {
+        operatorContext.recordRawInput(page.getSizeInBytes(), page.getPositionCount());
+        Page deserializedPage = serde.deserialize(page);
+        operatorContext.recordProcessedInput(deserializedPage.getSizeInBytes(), page.getPositionCount());
+        return deserializedPage;
     }
 
     @Override
@@ -150,13 +226,12 @@ public class NativeExecutionOperator
     {
     }
 
-    /*
-     * TODO: the close() method will shutdown the external process
-     */
     @Override
     public void close()
     {
         systemMemoryContext.setBytes(0);
+        task.stop();
+        process.close();
     }
 
     public static class NativeExecutionOperatorFactory
@@ -167,6 +242,7 @@ public class NativeExecutionOperator
         private final PlanFragment planFragment;
         private final TableWriteInfo tableWriteInfo;
         private final PagesSerdeFactory serdeFactory;
+        private final NativeExecutionProcessFactory taskFactory;
         private boolean closed;
 
         public NativeExecutionOperatorFactory(
@@ -174,13 +250,15 @@ public class NativeExecutionOperator
                 PlanNodeId planNodeId,
                 PlanFragment planFragment,
                 TableWriteInfo tableWriteInfo,
-                PagesSerdeFactory serdeFactory)
+                PagesSerdeFactory serdeFactory,
+                NativeExecutionProcessFactory taskFactory)
         {
             this.operatorId = operatorId;
             this.planNodeId = requireNonNull(planNodeId, "planNodeId is null");
             this.planFragment = requireNonNull(planFragment, "planFragment is null");
             this.tableWriteInfo = requireNonNull(tableWriteInfo, "tableWriteInfo is null");
             this.serdeFactory = requireNonNull(serdeFactory, "serdeFactory is null");
+            this.taskFactory = requireNonNull(taskFactory, "taskFactory is null");
         }
 
         @Override
@@ -199,7 +277,9 @@ public class NativeExecutionOperator
                     operatorContext,
                     planFragment,
                     tableWriteInfo,
-                    serdeFactory.createPagesSerde());
+                    serdeFactory.createPagesSerde(),
+                    taskFactory.createNativeExecutionProcess(operatorContext.getSession(), URI.create(NATIVE_EXECUTION_SERVER_URI)),
+                    taskFactory);
             return operator;
         }
 

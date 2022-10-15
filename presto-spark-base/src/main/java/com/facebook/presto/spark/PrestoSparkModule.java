@@ -24,10 +24,12 @@ import com.facebook.presto.PagesIndexPageSorter;
 import com.facebook.presto.SystemSessionProperties;
 import com.facebook.presto.block.BlockJsonSerde;
 import com.facebook.presto.client.NodeVersion;
+import com.facebook.presto.client.ServerInfo;
 import com.facebook.presto.common.block.Block;
 import com.facebook.presto.common.block.BlockEncoding;
 import com.facebook.presto.common.block.BlockEncodingManager;
 import com.facebook.presto.common.block.BlockEncodingSerde;
+import com.facebook.presto.common.block.ByteArrayBlock;
 import com.facebook.presto.common.type.Type;
 import com.facebook.presto.common.type.TypeManager;
 import com.facebook.presto.connector.ConnectorManager;
@@ -96,6 +98,8 @@ import com.facebook.presto.operator.PagesIndex;
 import com.facebook.presto.operator.TableCommitContext;
 import com.facebook.presto.operator.TaskMemoryReservationSummary;
 import com.facebook.presto.operator.index.IndexJoinLookupStats;
+import com.facebook.presto.operator.nativeexecution.ForNativeExecutionTask;
+import com.facebook.presto.operator.nativeexecution.NativeExecutionProcessFactory;
 import com.facebook.presto.resourcemanager.NoopResourceGroupService;
 import com.facebook.presto.resourcemanager.ResourceGroupService;
 import com.facebook.presto.server.ConnectorMetadataUpdateHandleJsonSerde;
@@ -105,6 +109,9 @@ import com.facebook.presto.server.PluginManagerConfig;
 import com.facebook.presto.server.QuerySessionSupplier;
 import com.facebook.presto.server.ServerConfig;
 import com.facebook.presto.server.SessionPropertyDefaults;
+import com.facebook.presto.server.SliceDeserializer;
+import com.facebook.presto.server.SliceSerializer;
+import com.facebook.presto.server.TaskUpdateRequest;
 import com.facebook.presto.server.security.ServerSecurityModule;
 import com.facebook.presto.spark.classloader_interface.SparkProcessType;
 import com.facebook.presto.spark.execution.PrestoSparkBroadcastTableCacheManager;
@@ -125,6 +132,7 @@ import com.facebook.presto.spi.memory.ClusterMemoryPoolManager;
 import com.facebook.presto.spi.relation.DeterminismEvaluator;
 import com.facebook.presto.spi.relation.DomainTranslator;
 import com.facebook.presto.spi.relation.PredicateCompiler;
+import com.facebook.presto.spi.relation.RowExpression;
 import com.facebook.presto.spi.relation.VariableReferenceExpression;
 import com.facebook.presto.spiller.GenericPartitioningSpillerFactory;
 import com.facebook.presto.spiller.GenericSpillerFactory;
@@ -180,6 +188,7 @@ import com.google.inject.Binder;
 import com.google.inject.Provides;
 import com.google.inject.Scopes;
 import com.google.inject.TypeLiteral;
+import io.airlift.slice.Slice;
 import org.weakref.jmx.MBeanExporter;
 import org.weakref.jmx.testing.TestingMBeanServer;
 
@@ -193,6 +202,7 @@ import java.util.concurrent.ScheduledExecutorService;
 
 import static com.facebook.airlift.concurrent.Threads.daemonThreadsNamed;
 import static com.facebook.airlift.configuration.ConfigBinder.configBinder;
+import static com.facebook.airlift.http.client.HttpClientBinder.httpClientBinder;
 import static com.facebook.airlift.json.JsonBinder.jsonBinder;
 import static com.facebook.airlift.json.JsonCodecBinder.jsonCodecBinder;
 import static com.facebook.airlift.json.smile.SmileCodecBinder.smileCodecBinder;
@@ -255,6 +265,10 @@ public class PrestoSparkModule
         jsonCodecBinder(binder).bindJsonCodec(PrestoSparkQueryData.class);
         jsonCodecBinder(binder).bindListJsonCodec(TaskMemoryReservationSummary.class);
         jsonCodecBinder(binder).bindJsonCodec(TableWriteInfo.class);
+        jsonCodecBinder(binder).bindJsonCodec(ServerInfo.class);
+        jsonBinder(binder).addSerializerBinding(Slice.class).to(SliceSerializer.class);
+        jsonBinder(binder).addDeserializerBinding(Slice.class).to(SliceDeserializer.class);
+        jsonCodecBinder(binder).bindJsonCodec(TaskUpdateRequest.class);
 
         // smile codecs
         smileCodecBinder(binder).bindSmileCodec(TaskSource.class);
@@ -305,6 +319,10 @@ public class PrestoSparkModule
         newSetBinder(binder, BlockEncoding.class);
         jsonBinder(binder).addSerializerBinding(Block.class).to(BlockJsonSerde.Serializer.class);
         jsonBinder(binder).addDeserializerBinding(Block.class).to(BlockJsonSerde.Deserializer.class);
+//        jsonBinder(binder).addSerializerBinding(RowExpression.class).to(BlockJsonSerde.Serializer.class);
+//        jsonBinder(binder).addSerializerBinding(ConstantExpression.class).to(BlockJsonSerde.Serializer.class);
+        jsonCodecBinder(binder).bindJsonCodec(RowExpression.class);
+        jsonCodecBinder(binder).bindJsonCodec(ByteArrayBlock.class);
 
         // metadata
         binder.bind(FunctionAndTypeManager.class).in(Scopes.SINGLETON);
@@ -481,6 +499,11 @@ public class PrestoSparkModule
         // extra credentials and authenticator for Presto-on-Spark
         newSetBinder(binder, PrestoSparkCredentialsProvider.class);
         newSetBinder(binder, PrestoSparkAuthenticatorProvider.class);
+
+        binder.bind(NativeExecutionProcessFactory.class).in(Scopes.SINGLETON);
+        httpClientBinder(binder).bindHttpClient("native-execution-client", ForNativeExecutionTask.class)
+                .withConfigDefaults(
+                        config -> config.setAuthenticationEnabled(false));
     }
 
     @Provides

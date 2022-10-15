@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.spark.execution.http;
+package com.facebook.presto.operator.nativeexecution;
 
 import com.facebook.airlift.http.client.HttpClient;
 import com.facebook.airlift.http.client.HttpStatus;
@@ -70,14 +70,20 @@ public class PrestoSparkHttpWorkerClient
     private final JsonCodec<PlanFragment> planFragmentCodec;
     private final JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec;
 
-    public PrestoSparkHttpWorkerClient(HttpClient httpClient, TaskId taskId, URI location)
+    public PrestoSparkHttpWorkerClient(
+            HttpClient httpClient,
+            TaskId taskId,
+            URI location,
+            JsonCodec<TaskInfo> taskInfoCodec,
+            JsonCodec<PlanFragment> planFragmentCodec,
+            JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec)
     {
         this.httpClient = requireNonNull(httpClient, "httpClient is null");
         this.taskId = requireNonNull(taskId, "taskId is null");
         this.location = requireNonNull(location, "location is null");
-        this.taskInfoCodec = JsonCodec.jsonCodec(TaskInfo.class);
-        this.planFragmentCodec = JsonCodec.jsonCodec(PlanFragment.class);
-        this.taskUpdateRequestCodec = JsonCodec.jsonCodec(TaskUpdateRequest.class);
+        this.taskInfoCodec = taskInfoCodec;
+        this.planFragmentCodec = planFragmentCodec;
+        this.taskUpdateRequestCodec = taskUpdateRequestCodec;
         this.taskUri = uriBuilderFrom(location)
                 .appendPath(taskId.toString())
                 .build();
@@ -119,7 +125,7 @@ public class PrestoSparkHttpWorkerClient
                 {
                     @Override
                     public Void handleException(Request request,
-                                                Exception exception)
+                            Exception exception)
                     {
                         log.debug(exception, "Acknowledge request failed: %s", uri);
                         return null;

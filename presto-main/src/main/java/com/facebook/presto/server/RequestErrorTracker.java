@@ -78,6 +78,11 @@ public class RequestErrorTracker
         return new RequestErrorTracker(taskId, taskUri, REMOTE_TASK_ERROR, WORKER_NODE_ERROR, maxErrorDuration, scheduledExecutor, jobDescription);
     }
 
+    public static RequestErrorTracker nativeExecutionRequestErrorTracker(String nodeId, URI taskUri, Duration maxErrorDuration, ScheduledExecutorService scheduledExecutor, String jobDescription)
+    {
+        return new RequestErrorTracker(nodeId, taskUri, REMOTE_TASK_ERROR, WORKER_NODE_ERROR, maxErrorDuration, scheduledExecutor, jobDescription);
+    }
+
     public ListenableFuture<?> acquireRequestPermit()
     {
         long delayNanos = backoff.getBackoffDelayNanos();

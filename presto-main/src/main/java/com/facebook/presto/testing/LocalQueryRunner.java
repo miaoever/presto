@@ -13,11 +13,14 @@
  */
 package com.facebook.presto.testing;
 
+import com.facebook.airlift.http.client.testing.TestingHttpClient;
+import com.facebook.airlift.http.client.testing.TestingResponse;
 import com.facebook.airlift.node.NodeInfo;
 import com.facebook.presto.GroupByHashPageIndexerFactory;
 import com.facebook.presto.PagesIndexPageSorter;
 import com.facebook.presto.Session;
 import com.facebook.presto.SystemSessionProperties;
+import com.facebook.presto.client.ServerInfo;
 import com.facebook.presto.common.QualifiedObjectName;
 import com.facebook.presto.common.block.BlockEncodingManager;
 import com.facebook.presto.common.block.SortOrder;
@@ -73,6 +76,7 @@ import com.facebook.presto.execution.RollbackTask;
 import com.facebook.presto.execution.ScheduledSplit;
 import com.facebook.presto.execution.SetSessionTask;
 import com.facebook.presto.execution.StartTransactionTask;
+import com.facebook.presto.execution.TaskInfo;
 import com.facebook.presto.execution.TaskManagerConfig;
 import com.facebook.presto.execution.TaskSource;
 import com.facebook.presto.execution.TruncateTableTask;
@@ -82,7 +86,6 @@ import com.facebook.presto.execution.scheduler.NodeScheduler;
 import com.facebook.presto.execution.scheduler.NodeSchedulerConfig;
 import com.facebook.presto.execution.scheduler.StreamingPlanSection;
 import com.facebook.presto.execution.scheduler.StreamingSubPlan;
-import com.facebook.presto.execution.scheduler.TableWriteInfo;
 import com.facebook.presto.execution.scheduler.nodeSelection.NodeSelectionStats;
 import com.facebook.presto.execution.scheduler.nodeSelection.SimpleTtlNodeSelectorConfig;
 import com.facebook.presto.execution.warnings.DefaultWarningCollector;
@@ -119,10 +122,12 @@ import com.facebook.presto.operator.StageExecutionDescriptor;
 import com.facebook.presto.operator.TableCommitContext;
 import com.facebook.presto.operator.TaskContext;
 import com.facebook.presto.operator.index.IndexJoinLookupStats;
+import com.facebook.presto.operator.nativeexecution.NativeExecutionProcessFactory;
 import com.facebook.presto.server.ConnectorMetadataUpdateHandleJsonSerde;
 import com.facebook.presto.server.PluginManager;
 import com.facebook.presto.server.PluginManagerConfig;
 import com.facebook.presto.server.SessionPropertyDefaults;
+import com.facebook.presto.server.TaskUpdateRequest;
 import com.facebook.presto.server.security.PasswordAuthenticatorManager;
 import com.facebook.presto.server.security.SecurityConfig;
 import com.facebook.presto.spi.ConnectorId;
@@ -210,6 +215,7 @@ import com.facebook.presto.ttl.clusterttlprovidermanagers.ThrowingClusterTtlProv
 import com.facebook.presto.ttl.nodettlfetchermanagers.ThrowingNodeTtlFetcherManager;
 import com.facebook.presto.util.FinalizerService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -239,6 +245,7 @@ import java.util.function.Function;
 
 import static com.facebook.airlift.concurrent.MoreFutures.getFutureValue;
 import static com.facebook.airlift.concurrent.Threads.daemonThreadsNamed;
+import static com.facebook.airlift.http.client.HttpStatus.OK;
 import static com.facebook.airlift.json.JsonCodec.jsonCodec;
 import static com.facebook.presto.SystemSessionProperties.getHeapDumpFileDirectory;
 import static com.facebook.presto.SystemSessionProperties.getQueryMaxTotalMemoryPerNode;
@@ -247,6 +254,7 @@ import static com.facebook.presto.SystemSessionProperties.isVerboseExceededMemor
 import static com.facebook.presto.cost.StatsCalculatorModule.createNewStatsCalculator;
 import static com.facebook.presto.execution.scheduler.StreamingPlanSection.extractStreamingSections;
 import static com.facebook.presto.execution.scheduler.TableWriteInfo.createTableWriteInfo;
+import static com.facebook.presto.spi.NodeState.ACTIVE;
 import static com.facebook.presto.spi.connector.ConnectorSplitManager.SplitSchedulingStrategy.GROUPED_SCHEDULING;
 import static com.facebook.presto.spi.connector.ConnectorSplitManager.SplitSchedulingStrategy.REWINDABLE_GROUPED_SCHEDULING;
 import static com.facebook.presto.spi.connector.ConnectorSplitManager.SplitSchedulingStrategy.UNGROUPED_SCHEDULING;
@@ -872,9 +880,15 @@ public class LocalQueryRunner
                 new NoOpFragmentResultCacheManager(),
                 objectMapper,
                 standaloneSpillerFactory,
-                jsonCodec(TaskSource.class),
-                jsonCodec(TableWriteInfo.class),
-                jsonCodec(PlanFragment.class));
+                new NativeExecutionProcessFactory(
+                        new TestingHttpClient(input -> new TestingResponse(OK, ArrayListMultimap.create(), ACTIVE.name().getBytes())),
+                        newCachedThreadPool(daemonThreadsNamed("native-execution-task-executor-%s")),
+                        newScheduledThreadPool(1, daemonThreadsNamed("native-execution-task-scheduler-%s")),
+                        newScheduledThreadPool(1, daemonThreadsNamed("native-execution-task-scheduler-%s")),
+                        jsonCodec(TaskInfo.class),
+                        jsonCodec(PlanFragment.class),
+                        jsonCodec(TaskUpdateRequest.class),
+                        jsonCodec(ServerInfo.class)));
 
         // plan query
         StageExecutionDescriptor stageExecutionDescriptor = subplan.getFragment().getStageExecutionDescriptor();

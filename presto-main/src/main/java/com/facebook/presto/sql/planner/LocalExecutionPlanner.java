@@ -122,6 +122,7 @@ import com.facebook.presto.operator.index.IndexBuildDriverFactoryProvider;
 import com.facebook.presto.operator.index.IndexJoinLookupStats;
 import com.facebook.presto.operator.index.IndexLookupSourceFactory;
 import com.facebook.presto.operator.index.IndexSourceOperator;
+import com.facebook.presto.operator.nativeexecution.NativeExecutionProcessFactory;
 import com.facebook.presto.operator.project.CursorProcessor;
 import com.facebook.presto.operator.project.PageProcessor;
 import com.facebook.presto.operator.repartition.OptimizedPartitionedOutputOperator.OptimizedPartitionedOutputFactory;
@@ -375,6 +376,8 @@ public class LocalExecutionPlanner
     private final boolean tableFinishOperatorMemoryTrackingEnabled;
     private final StandaloneSpillerFactory standaloneSpillerFactory;
 
+    private final NativeExecutionProcessFactory nativeExecutionProcessFactory;
+
     private static final TypeSignature SPHERICAL_GEOGRAPHY_TYPE_SIGNATURE = parseTypeSignature("SphericalGeography");
 
     @Inject
@@ -405,7 +408,8 @@ public class LocalExecutionPlanner
             DeterminismEvaluator determinismEvaluator,
             FragmentResultCacheManager fragmentResultCacheManager,
             ObjectMapper objectMapper,
-            StandaloneSpillerFactory standaloneSpillerFactory)
+            StandaloneSpillerFactory standaloneSpillerFactory,
+            NativeExecutionProcessFactory nativeExecutionProcessFactory)
     {
         this.explainAnalyzeContext = requireNonNull(explainAnalyzeContext, "explainAnalyzeContext is null");
         this.pageSourceProvider = requireNonNull(pageSourceProvider, "pageSourceProvider is null");
@@ -440,6 +444,7 @@ public class LocalExecutionPlanner
         this.objectMapper = requireNonNull(objectMapper, "objectMapper is null");
         this.tableFinishOperatorMemoryTrackingEnabled = requireNonNull(memoryManagerConfig, "memoryManagerConfig is null").isTableFinishOperatorMemoryTrackingEnabled();
         this.standaloneSpillerFactory = requireNonNull(standaloneSpillerFactory, "standaloneSpillerFactory is null");
+        this.nativeExecutionProcessFactory = requireNonNull(nativeExecutionProcessFactory, "nativeExecutionTaskFactory is null");
     }
 
     public LocalExecutionPlan plan(
@@ -569,7 +574,7 @@ public class LocalExecutionPlanner
         LocalExecutionPlanContext context = new LocalExecutionPlanContext(taskContext, tableWriteInfo);
         PlanNode plan = planFragment.getRoot();
         PhysicalOperation physicalOperation = plan.accept(
-                new Visitor(session, planFragment, remoteSourceFactory, pageSinkCommitRequired), context);
+                new Visitor(session, planFragment, remoteSourceFactory, pageSinkCommitRequired, nativeExecutionProcessFactory), context);
 
         Function<Page, Page> pagePreprocessor = enforceLayoutProcessor(outputLayout, physicalOperation.getLayout());
 
@@ -829,17 +834,20 @@ public class LocalExecutionPlanner
         private final RemoteSourceFactory remoteSourceFactory;
         private final boolean pageSinkCommitRequired;
         private final PlanFragment fragment;
+        private final NativeExecutionProcessFactory nativeExecutionProcessFactory;
 
         private Visitor(
                 Session session,
                 PlanFragment fragment,
                 RemoteSourceFactory remoteSourceFactory,
-                boolean pageSinkCommitRequired)
+                boolean pageSinkCommitRequired,
+                NativeExecutionProcessFactory nativeExecutionProcessFactory)
         {
             this.session = requireNonNull(session, "session is null");
             this.fragment = requireNonNull(fragment, "fragment is null");
             this.stageExecutionDescriptor = requireNonNull(fragment.getStageExecutionDescriptor(), "stageExecutionDescriptor is null");
             this.remoteSourceFactory = requireNonNull(remoteSourceFactory, "remoteSourceFactory is null");
+            this.nativeExecutionProcessFactory = requireNonNull(nativeExecutionProcessFactory, "nativeExecutionTaskFactory is null");
             this.pageSinkCommitRequired = pageSinkCommitRequired;
         }
 
@@ -2954,7 +2962,8 @@ public class LocalExecutionPlanner
                     node.getId(),
                     fragment.withSubPlan(node.getSubPlan()),
                     context.getTableWriteInfo(),
-                    new PagesSerdeFactory(blockEncodingSerde, isExchangeCompressionEnabled(session), isExchangeChecksumEnabled(session)));
+                    new PagesSerdeFactory(blockEncodingSerde, isExchangeCompressionEnabled(session), isExchangeChecksumEnabled(session)),
+                    nativeExecutionProcessFactory);
             return new PhysicalOperation(operatorFactory, makeLayout(node), context, UNGROUPED_EXECUTION);
         }
 
