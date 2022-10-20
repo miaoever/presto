@@ -54,13 +54,13 @@ import static com.facebook.presto.server.smile.AdaptingJsonResponseHandler.creat
 import static java.util.Objects.requireNonNull;
 
 /**
- * An abstraction of HTTP client that communicates with the locally running Presto worker process. It exposes worker endpoints to simple method calls.
+ * An abstraction of HTTP client that communicates with the locally running Presto worker process. It exposes task level endpoints to simple method calls.
  */
 @ThreadSafe
-public class PrestoSparkHttpWorkerClient
+public class PrestoSparkHttpTaskClient
         implements RpcShuffleClient
 {
-    private static final Logger log = Logger.get(PrestoSparkHttpWorkerClient.class);
+    private static final Logger log = Logger.get(PrestoSparkHttpTaskClient.class);
 
     private final HttpClient httpClient;
     private final URI location;
@@ -70,7 +70,7 @@ public class PrestoSparkHttpWorkerClient
     private final JsonCodec<PlanFragment> planFragmentCodec;
     private final JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec;
 
-    public PrestoSparkHttpWorkerClient(HttpClient httpClient, TaskId taskId, URI location)
+    public PrestoSparkHttpTaskClient(HttpClient httpClient, TaskId taskId, URI location)
     {
         this.httpClient = requireNonNull(httpClient, "httpClient is null");
         this.taskId = requireNonNull(taskId, "taskId is null");
@@ -119,7 +119,7 @@ public class PrestoSparkHttpWorkerClient
                 {
                     @Override
                     public Void handleException(Request request,
-                                                Exception exception)
+                            Exception exception)
                     {
                         log.debug(exception, "Acknowledge request failed: %s", uri);
                         return null;

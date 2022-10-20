@@ -39,6 +39,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeoutException;
 
 import static com.facebook.presto.spi.HostAddress.fromUri;
+import static com.facebook.presto.spi.StandardErrorCode.NATIVE_EXECUTION_PROCESS_LAUNCH_FAILURE;
 import static com.facebook.presto.spi.StandardErrorCode.REMOTE_TASK_ERROR;
 import static com.facebook.presto.spi.StandardErrorCode.TOO_MANY_REQUESTS_FAILED;
 import static com.facebook.presto.util.Failures.WORKER_NODE_ERROR;
@@ -76,6 +77,11 @@ public class RequestErrorTracker
     public static RequestErrorTracker taskRequestErrorTracker(TaskId taskId, URI taskUri, Duration maxErrorDuration, ScheduledExecutorService scheduledExecutor, String jobDescription)
     {
         return new RequestErrorTracker(taskId, taskUri, REMOTE_TASK_ERROR, WORKER_NODE_ERROR, maxErrorDuration, scheduledExecutor, jobDescription);
+    }
+
+    public static RequestErrorTracker nativeExecutionRequestErrorTracker(String nodeId, URI taskUri, Duration maxErrorDuration, ScheduledExecutorService scheduledExecutor, String jobDescription)
+    {
+        return new RequestErrorTracker(nodeId, taskUri, NATIVE_EXECUTION_PROCESS_LAUNCH_FAILURE, WORKER_NODE_ERROR, maxErrorDuration, scheduledExecutor, jobDescription);
     }
 
     public ListenableFuture<?> acquireRequestPermit()

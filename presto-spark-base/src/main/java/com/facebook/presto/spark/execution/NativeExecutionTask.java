@@ -22,7 +22,7 @@ import com.facebook.presto.execution.TaskSource;
 import com.facebook.presto.execution.buffer.OutputBuffers;
 import com.facebook.presto.execution.scheduler.TableWriteInfo;
 import com.facebook.presto.server.smile.BaseResponse;
-import com.facebook.presto.spark.execution.http.PrestoSparkHttpWorkerClient;
+import com.facebook.presto.spark.execution.http.PrestoSparkHttpTaskClient;
 import com.facebook.presto.spi.page.SerializedPage;
 import com.facebook.presto.sql.planner.PlanFragment;
 import com.google.common.util.concurrent.FutureCallback;
@@ -58,7 +58,7 @@ public class NativeExecutionTask
     private final Session session;
     private final PlanFragment planFragment;
     private final OutputBuffers outputBuffers;
-    private final PrestoSparkHttpWorkerClient workerClient;
+    private final PrestoSparkHttpTaskClient workerClient;
     private final TableWriteInfo tableWriteInfo;
     private final List<TaskSource> sources;
     private final Executor executor;
@@ -82,7 +82,7 @@ public class NativeExecutionTask
         this.sources = requireNonNull(sources, "sources is null");
         this.executor = requireNonNull(executor, "executor is null");
         this.outputBuffers = createInitialEmptyOutputBuffers(PARTITIONED);
-        this.workerClient = new PrestoSparkHttpWorkerClient(requireNonNull(httpClient, "httpClient is null"), taskId, location);
+        this.workerClient = new PrestoSparkHttpTaskClient(requireNonNull(httpClient, "httpClient is null"), taskId, location);
         requireNonNull(updateScheduledExecutor, "updateScheduledExecutor is null");
         this.taskInfoFetcher = new HttpNativeExecutionTaskInfoFetcher(
                 updateScheduledExecutor,

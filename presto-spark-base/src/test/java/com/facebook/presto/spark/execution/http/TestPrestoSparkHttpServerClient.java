@@ -86,9 +86,9 @@ import static org.testng.Assert.assertThrows;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
-public class TestPrestoSparkHttpWorkerClient
+public class TestPrestoSparkHttpServerClient
 {
-    private static final String TASK_ROOT_PATH = "/v1/task";
+    private static final String TASK_ROOT_PATH = "/v1/info";
     private static final URI BASE_URI = uriBuilder()
             .scheme("http")
             .host("localhost")
@@ -97,15 +97,15 @@ public class TestPrestoSparkHttpWorkerClient
     private static final Duration NO_DURATION = new Duration(0, TimeUnit.MILLISECONDS);
 
     @Test
-    public void testResultGet()
+    public void testServerInfo()
     {
         TaskId taskId = new TaskId(
                 "testid",
                 0,
                 0,
                 0);
-        URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        URI uri = uriBuilderFrom(BASE_URI).build();
+        PrestoSparkHttpTaskClient workerClient = new PrestoSparkHttpTaskClient(new TestingHttpClient(NO_DURATION), taskId, uri);
         ListenableFuture<PageBufferClient.PagesResponse> future = workerClient.getResults(
                 0,
                 new DataSize(32, DataSize.Unit.MEGABYTE));
@@ -126,7 +126,7 @@ public class TestPrestoSparkHttpWorkerClient
     {
         TaskId taskId = new TaskId("testid", 0, 0, 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        PrestoSparkHttpTaskClient workerClient = new PrestoSparkHttpTaskClient(new TestingHttpClient(NO_DURATION), taskId, uri);
         workerClient.acknowledgeResultsAsync(1);
     }
 
@@ -135,7 +135,7 @@ public class TestPrestoSparkHttpWorkerClient
     {
         TaskId taskId = new TaskId("testid", 0, 0, 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        PrestoSparkHttpTaskClient workerClient = new PrestoSparkHttpTaskClient(new TestingHttpClient(NO_DURATION), taskId, uri);
         ListenableFuture<?> future = workerClient.abortResults();
         try {
             future.get();
@@ -151,7 +151,7 @@ public class TestPrestoSparkHttpWorkerClient
     {
         TaskId taskId = new TaskId("testid", 0, 0, 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        PrestoSparkHttpTaskClient workerClient = new PrestoSparkHttpTaskClient(new TestingHttpClient(NO_DURATION), taskId, uri);
         ListenableFuture<BaseResponse<TaskInfo>> future = workerClient.getTaskInfo();
         try {
             TaskInfo taskInfo = future.get().getValue();
@@ -168,7 +168,7 @@ public class TestPrestoSparkHttpWorkerClient
     {
         TaskId taskId = new TaskId("testid", 0, 0, 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        PrestoSparkHttpTaskClient workerClient = new PrestoSparkHttpTaskClient(new TestingHttpClient(NO_DURATION), taskId, uri);
 
         Set<ScheduledSplit> splits = new HashSet<>();
         splits.add(SPLIT);
@@ -195,7 +195,7 @@ public class TestPrestoSparkHttpWorkerClient
     {
         TaskId taskId = new TaskId("testid", 0, 0, 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        PrestoSparkHttpTaskClient workerClient = new PrestoSparkHttpTaskClient(new TestingHttpClient(NO_DURATION), taskId, uri);
         HttpNativeExecutionTaskResultFetcher taskResultFetcher = new HttpNativeExecutionTaskResultFetcher(
                 newScheduledThreadPool(1),
                 workerClient,
@@ -225,7 +225,7 @@ public class TestPrestoSparkHttpWorkerClient
         // Test request timeout.
         TaskId taskId = new TaskId("testid", 0, 0, 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(
+        PrestoSparkHttpTaskClient workerClient = new PrestoSparkHttpTaskClient(
                 new TestingHttpClient(new Duration(500, TimeUnit.MILLISECONDS)),
                 taskId,
                 uri);
@@ -242,7 +242,7 @@ public class TestPrestoSparkHttpWorkerClient
     {
         TaskId taskId = new TaskId("testid", 0, 0, 0);
         URI uri = uriBuilderFrom(BASE_URI).appendPath(TASK_ROOT_PATH).build();
-        PrestoSparkHttpWorkerClient workerClient = new PrestoSparkHttpWorkerClient(new TestingHttpClient(NO_DURATION), taskId, uri);
+        PrestoSparkHttpTaskClient workerClient = new PrestoSparkHttpTaskClient(new TestingHttpClient(NO_DURATION), taskId, uri);
         HttpNativeExecutionTaskInfoFetcher taskInfoFetcher = new HttpNativeExecutionTaskInfoFetcher(
                 newScheduledThreadPool(1),
                 workerClient,
@@ -357,7 +357,7 @@ public class TestPrestoSparkHttpWorkerClient
     }
 
     private static class TestingHttpClient
-            implements com.facebook.airlift.http.client.HttpClient
+            implements HttpClient
     {
         private final Duration mockDelay;
         private final ScheduledExecutorService executor;
@@ -369,7 +369,8 @@ public class TestPrestoSparkHttpWorkerClient
         }
 
         @Override
-        public <T, E extends Exception> T execute(Request request, ResponseHandler<T, E> responseHandler) throws E
+        public <T, E extends Exception> T execute(Request request, ResponseHandler<T, E> responseHandler)
+                throws E
         {
             try {
                 return executeAsync(request, responseHandler).get();
@@ -393,61 +394,10 @@ public class TestPrestoSparkHttpWorkerClient
                         String path = uri.getPath();
                         String taskId = getTaskId(uri);
                         if (method.equalsIgnoreCase("GET")) {
-                            // GET /v1/task/{taskId}
-                            if (Pattern.compile("\\/v1\\/task\\/[a-zA-Z0-9]+.[0-9]+.[0-9]+.[0-9]+\\z").matcher(path).find()) {
+                            // GET /v1/info
+                            if (Pattern.compile("\\/v1\\/info\\z").matcher(path).find()) {
                                 try {
                                     future.complete(responseHandler.handle(request, TestingResponse.createTaskInfoResponse(HttpStatus.OK, taskId)));
-                                }
-                                catch (Exception e) {
-                                    e.printStackTrace();
-                                    future.completeExceptionally(e);
-                                }
-                            }
-                            // GET /v1/task/{taskId}/results/{bufferId}/{token}/acknowledge
-                            else if (Pattern.compile(".*\\/results\\/[0-9]+\\/[0-9]+\\/acknowledge\\z").matcher(path).find()) {
-                                try {
-                                    future.complete(responseHandler.handle(request, TestingResponse.createDummyResultResponse()));
-                                }
-                                catch (Exception e) {
-                                    e.printStackTrace();
-                                    future.completeExceptionally(e);
-                                }
-                            }
-                            // GET /v1/task/{taskId}/results/{bufferId}/{token}
-                            else if (Pattern.compile(".*\\/results\\/[0-9]+\\/[0-9]+\\z").matcher(path).find()) {
-                                try {
-                                    future.complete(responseHandler.handle(
-                                            request,
-                                            TestingResponse.createResultResponse(
-                                                    HttpStatus.OK,
-                                                    taskId,
-                                                    0,
-                                                    1,
-                                                    true)));
-                                }
-                                catch (Exception e) {
-                                    e.printStackTrace();
-                                    future.completeExceptionally(e);
-                                }
-                            }
-                        }
-                        else if (method.equalsIgnoreCase("POST")) {
-                            // POST /v1/task/{taskId}
-                            if (Pattern.compile("\\/v1\\/task\\/[a-zA-Z0-9]+.[0-9]+.[0-9]+.[0-9]+\\z").matcher(path).find()) {
-                                try {
-                                    future.complete(responseHandler.handle(request, TestingResponse.createTaskInfoResponse(HttpStatus.OK, taskId)));
-                                }
-                                catch (Exception e) {
-                                    e.printStackTrace();
-                                    future.completeExceptionally(e);
-                                }
-                            }
-                        }
-                        else if (method.equalsIgnoreCase("DELETE")) {
-                            // DELETE /v1/task/{taskId}
-                            if (Pattern.compile("\\/v1\\/task\\/[a-zA-Z0-9]+.[0-9]+.[0-9]+.[0-9]+\\z").matcher(path).find()) {
-                                try {
-                                    future.complete(responseHandler.handle(request, TestingResponse.createDummyResultResponse()));
                                 }
                                 catch (Exception e) {
                                     e.printStackTrace();
