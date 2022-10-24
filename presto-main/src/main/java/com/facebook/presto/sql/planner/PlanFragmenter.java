@@ -514,6 +514,13 @@ public class PlanFragmenter
         }
 
         @Override
+        public PlanNode visitNativeExecution(NativeExecutionNode node, RewriteContext<FragmentProperties> context)
+        {
+            node.getSubPlan().accept(this, context);
+            return context.defaultRewrite(node.getSubPlan(), context.get());
+        }
+
+        @Override
         public PlanNode visitExchange(ExchangeNode exchange, RewriteContext<FragmentProperties> context)
         {
             switch (exchange.getScope()) {

@@ -54,6 +54,7 @@ public class HandleResolver
     public HandleResolver()
     {
         handleResolvers.put(REMOTE_CONNECTOR_ID.toString(), new MaterializedHandleResolver(new RemoteHandleResolver()));
+        handleResolvers.put("$native_execution", new MaterializedHandleResolver(new NativeExecutionShuffleHandleResolver()));
         handleResolvers.put("$system", new MaterializedHandleResolver(new SystemHandleResolver()));
         handleResolvers.put("$info_schema", new MaterializedHandleResolver(new InformationSchemaHandleResolver()));
         handleResolvers.put("$empty", new MaterializedHandleResolver(new EmptySplitHandleResolver()));

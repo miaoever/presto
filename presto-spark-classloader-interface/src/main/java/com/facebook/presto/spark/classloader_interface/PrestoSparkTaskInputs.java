@@ -31,15 +31,22 @@ public class PrestoSparkTaskInputs
     private final Map<String, Broadcast<?>> broadcastInputs;
     // For the COORDINATOR_ONLY fragment we first collect the inputs on the Driver
     private final Map<String, List<PrestoSparkSerializedPage>> inMemoryInputs;
+    // fragmentId -> PrestoSparkShuffleReadDescriptor for native execution
+    private final Map<String, PrestoSparkShuffleReadDescriptor> shuffleReadDescriptors;
+    private final List<PrestoSparkShuffleWriteDescriptor> shuffleWriteDescriptors;
 
     public PrestoSparkTaskInputs(
             Map<String, Iterator<Tuple2<MutablePartitionId, PrestoSparkMutableRow>>> shuffleInputs,
             Map<String, Broadcast<?>> broadcastInputs,
-            Map<String, List<PrestoSparkSerializedPage>> inMemoryInputs)
+            Map<String, List<PrestoSparkSerializedPage>> inMemoryInputs,
+            Map<String, PrestoSparkShuffleReadDescriptor> shuffleReadDescriptors,
+            List<PrestoSparkShuffleWriteDescriptor> shuffleWriteDescriptors)
     {
         this.shuffleInputs = unmodifiableMap(new HashMap<>(requireNonNull(shuffleInputs, "shuffleInputs is null")));
         this.broadcastInputs = unmodifiableMap(new HashMap<>(requireNonNull(broadcastInputs, "broadcastInputs is null")));
         this.inMemoryInputs = unmodifiableMap(new HashMap<>(requireNonNull(inMemoryInputs, "inMemoryInputs is null")));
+        this.shuffleReadDescriptors = requireNonNull(shuffleReadDescriptors, "shuffleReadDescriptors is null");
+        this.shuffleWriteDescriptors = requireNonNull(shuffleWriteDescriptors, "shuffleReadDescriptors is null");
     }
 
     public Map<String, Iterator<Tuple2<MutablePartitionId, PrestoSparkMutableRow>>> getShuffleInputs()
@@ -50,6 +57,16 @@ public class PrestoSparkTaskInputs
     public Map<String, Broadcast<?>> getBroadcastInputs()
     {
         return broadcastInputs;
+    }
+
+    public Map<String, PrestoSparkShuffleReadDescriptor> getShuffleReadDescriptors()
+    {
+        return shuffleReadDescriptors;
+    }
+
+    public List<PrestoSparkShuffleWriteDescriptor> getShuffleWriteDescriptors()
+    {
+        return shuffleWriteDescriptors;
     }
 
     public Map<String, List<PrestoSparkSerializedPage>> getInMemoryInputs()

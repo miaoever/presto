@@ -18,11 +18,17 @@ import com.facebook.presto.testing.QueryRunner;
 import com.facebook.presto.tests.AbstractTestQueryFramework;
 import org.testng.annotations.Test;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import static com.facebook.presto.SystemSessionProperties.NATIVE_EXECUTION_ENABLED;
 
 public class TestPrestoSparkNativeExecution
         extends AbstractTestQueryFramework
 {
+    private static final String SPARK_SHUFFLE_MANAGER = "spark.shuffle.manager";
+    private static final String DEFAULT_SPARK_SHUFFLE_MANAGER = "spark.default.shuffle.manager";
+
     @Override
     protected QueryRunner createQueryRunner()
             throws Exception
@@ -41,5 +47,29 @@ public class TestPrestoSparkNativeExecution
 
         // Expecting 0 row updated since currently the NativeExecutionOperator is dummy.
         assertUpdate(session, "CREATE TABLE test_tablescan as SELECT orderkey, custkey FROM orders", 0);
+    }
+
+    public static Map<String, String> getNativeExecutionShuffleConfigs()
+    {
+        Map<String, String> SparkConfigs = new HashMap<>();
+        SparkConfigs.put(SPARK_SHUFFLE_MANAGER, "com.facebook.presto.spark.classloader_interface.PrestoSparkNativeExecutionShuffleManager");
+        SparkConfigs.put(DEFAULT_SPARK_SHUFFLE_MANAGER, "org.apache.spark.shuffle.sort.SortShuffleManager");
+        return SparkConfigs;
+    }
+
+    @Test
+    public void testNativeExecutionWithShuffle()
+    {
+        Session session = Session.builder(getSession())
+                .setSystemProperty(NATIVE_EXECUTION_ENABLED, "true")
+                .setSystemProperty("table_writer_merge_operator_enabled", "false")
+                .setCatalogSessionProperty("hive", "collect_column_statistics_on_write", "false")
+                .build();
+
+        PrestoSparkQueryRunner queryRunner = (PrestoSparkQueryRunner) getQueryRunner();
+        queryRunner.resetSparkContext(getNativeExecutionShuffleConfigs());
+        // Expecting 0 row updated since currently the NativeExecutionOperator is dummy.
+        queryRunner.execute(session, "CREATE TABLE test_aggregate as SELECT  partkey, count(*) c FROM lineitem WHERE partkey % 10 = 1 GROUP BY partkey");
+        //assertUpdate(session, "CREATE TABLE test_aggregate as SELECT  partkey, count(*) c FROM lineitem WHERE partkey % 10 = 1 GROUP BY partkey", 0);
     }
 }

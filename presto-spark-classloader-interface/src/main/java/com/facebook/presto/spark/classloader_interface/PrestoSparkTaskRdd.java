@@ -13,12 +13,22 @@
  */
 package com.facebook.presto.spark.classloader_interface;
 
+import org.apache.spark.MapOutputTracker;
 import org.apache.spark.Partition;
+import org.apache.spark.ShuffleDependency;
 import org.apache.spark.SparkContext;
+import org.apache.spark.SparkEnv;
 import org.apache.spark.TaskContext;
 import org.apache.spark.rdd.RDD;
+import org.apache.spark.rdd.ShuffledRDD;
+import org.apache.spark.rdd.ShuffledRDDPartition;
 import org.apache.spark.rdd.ZippedPartitionsBaseRDD;
 import org.apache.spark.rdd.ZippedPartitionsPartition;
+import org.apache.spark.shuffle.ShuffleHandle;
+import org.apache.spark.storage.BlockId;
+import org.apache.spark.storage.BlockManagerId;
+import org.spark_project.guava.collect.ImmutableList;
+import org.spark_project.guava.collect.ImmutableMap;
 import scala.Tuple2;
 import scala.collection.Iterator;
 import scala.collection.Seq;
@@ -29,11 +39,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import static com.facebook.presto.spark.classloader_interface.ScalaUtils.emptyScalaIterator;
 import static java.lang.String.format;
 import static java.util.Collections.unmodifiableMap;
 import static java.util.Objects.requireNonNull;
+import static org.spark_project.guava.base.Preconditions.checkArgument;
 import static scala.collection.JavaConversions.asScalaBuffer;
 import static scala.collection.JavaConversions.seqAsJavaList;
 
@@ -61,13 +73,15 @@ public class PrestoSparkTaskRdd<T extends PrestoSparkTaskOutput>
     private List<RDD<Tuple2<MutablePartitionId, PrestoSparkMutableRow>>> shuffleInputRdds;
     private PrestoSparkTaskSourceRdd taskSourceRdd;
     private PrestoSparkTaskProcessor<T> taskProcessor;
+    private boolean isNativeExecutionEnabled;
 
     public static <T extends PrestoSparkTaskOutput> PrestoSparkTaskRdd<T> create(
             SparkContext context,
             Optional<PrestoSparkTaskSourceRdd> taskSourceRdd,
             // fragmentId -> RDD
             Map<String, RDD<Tuple2<MutablePartitionId, PrestoSparkMutableRow>>> shuffleInputRddMap,
-            PrestoSparkTaskProcessor<T> taskProcessor)
+            PrestoSparkTaskProcessor<T> taskProcessor,
+            boolean isNativeExecutionEnabled)
     {
         requireNonNull(context, "context is null");
         requireNonNull(taskSourceRdd, "taskSourceRdd is null");
@@ -79,7 +93,7 @@ public class PrestoSparkTaskRdd<T extends PrestoSparkTaskOutput>
             shuffleInputFragmentIds.add(entry.getKey());
             shuffleInputRdds.add(entry.getValue());
         }
-        return new PrestoSparkTaskRdd<>(context, taskSourceRdd, shuffleInputFragmentIds, shuffleInputRdds, taskProcessor);
+        return new PrestoSparkTaskRdd<>(context, taskSourceRdd, shuffleInputFragmentIds, shuffleInputRdds, taskProcessor, isNativeExecutionEnabled);
     }
 
     private PrestoSparkTaskRdd(
@@ -87,7 +101,8 @@ public class PrestoSparkTaskRdd<T extends PrestoSparkTaskOutput>
             Optional<PrestoSparkTaskSourceRdd> taskSourceRdd,
             List<String> shuffleInputFragmentIds,
             List<RDD<Tuple2<MutablePartitionId, PrestoSparkMutableRow>>> shuffleInputRdds,
-            PrestoSparkTaskProcessor<T> taskProcessor)
+            PrestoSparkTaskProcessor<T> taskProcessor,
+            boolean isNativeExecutionEnabled)
     {
         super(context, getRDDSequence(taskSourceRdd, shuffleInputRdds), false, fakeClassTag());
         this.shuffleInputFragmentIds = shuffleInputFragmentIds;
@@ -95,6 +110,7 @@ public class PrestoSparkTaskRdd<T extends PrestoSparkTaskOutput>
         // Optional is not Java Serializable
         this.taskSourceRdd = taskSourceRdd.orElse(null);
         this.taskProcessor = context.clean(taskProcessor, true);
+        this.isNativeExecutionEnabled = isNativeExecutionEnabled;
     }
 
     private static Seq<RDD<?>> getRDDSequence(Optional<PrestoSparkTaskSourceRdd> taskSourceRdd, List<RDD<Tuple2<MutablePartitionId, PrestoSparkMutableRow>>> shuffleInputRdds)
@@ -102,6 +118,56 @@ public class PrestoSparkTaskRdd<T extends PrestoSparkTaskOutput>
         List<RDD<?>> list = new ArrayList<>(shuffleInputRdds);
         taskSourceRdd.ifPresent(list::add);
         return asScalaBuffer(list).toSeq();
+    }
+
+    private ShuffleHandle getShuffleHandle(RDD<?> rdd)
+    {
+        checkArgument(rdd instanceof ShuffledRDD);
+        return ((ShuffleDependency<?, ?, ?>) rdd.dependencies().head()).shuffleHandle();
+    }
+
+    private int getNumberOfPartitions(RDD<?> rdd)
+    {
+        checkArgument(rdd instanceof ShuffledRDD);
+        return rdd.getNumPartitions();
+    }
+
+    private List<String> getBlockIds(ShuffledRDDPartition partition, ShuffleHandle shuffleHandle)
+    {
+        MapOutputTracker mapOutputTracker = SparkEnv.get().mapOutputTracker();
+        List<Tuple2<BlockManagerId, Seq<Tuple2<BlockId, Object>>>> mapSizes = seqAsJavaList(mapOutputTracker.getMapSizesByExecutorId(shuffleHandle.shuffleId(), partition.idx()));
+        // return mapSizes.stream().map(item -> java.lang.Long.valueOf(item._1.executorId())).collect(Collectors.toList());
+        return mapSizes.stream().map(item -> item._1.executorId()).collect(Collectors.toList());
+    }
+
+    private Map<String, PrestoSparkShuffleReadDescriptor> getShuffleReadDescriptor(Partition split, List<Partition> partitions)
+    {
+        ImmutableMap.Builder<String, PrestoSparkShuffleReadDescriptor> shuffleReadDescriptors = ImmutableMap.builder();
+
+        // Get shuffle information from ShuffledRdds for shuffle read
+        for (int inputIndex = 0; inputIndex < shuffleInputRdds.size(); inputIndex++) {
+            Partition partition = partitions.get(inputIndex);
+            ShuffleHandle handle = getShuffleHandle(shuffleInputRdds.get(inputIndex));
+            checkArgument(partition instanceof ShuffledRDDPartition, "partition is required to be ShuffledRddPartition");
+            shuffleReadDescriptors.put(
+                    shuffleInputFragmentIds.get(inputIndex),
+                    new PrestoSparkShuffleReadDescriptor(partition, handle, getNumberOfPartitions(shuffleInputRdds.get(inputIndex)), getBlockIds(((ShuffledRDDPartition) partition), handle)));
+        }
+
+        return shuffleReadDescriptors.build();
+    }
+
+    private List<PrestoSparkShuffleWriteDescriptor> getShuffleWriteDescriptor(Partition split)
+    {
+        ImmutableList.Builder<PrestoSparkShuffleWriteDescriptor> shuffleWriteDescriptors = ImmutableList.builder();
+
+        // Get shuffle information from Spark shuffle manager for shuffle write
+        checkArgument(SparkEnv.get().shuffleManager() instanceof PrestoSparkNativeExecutionShuffleManager, "Native execution requires to use PrestoSparkNativeExecutionShuffleManager");
+        PrestoSparkNativeExecutionShuffleManager shuffleManager = (PrestoSparkNativeExecutionShuffleManager) SparkEnv.get().shuffleManager();
+        Optional<ShuffleHandle> shuffleHandle = shuffleManager.getShuffleHandle(split.index());
+        shuffleHandle.ifPresent(handle -> shuffleWriteDescriptors.add(new PrestoSparkShuffleWriteDescriptor(handle, shuffleManager.getNumOfPartitions(handle.shuffleId()))));
+
+        return shuffleWriteDescriptors.build();
     }
 
     private static <T> ClassTag<T> fakeClassTag()
@@ -133,7 +199,11 @@ public class PrestoSparkTaskRdd<T extends PrestoSparkTaskOutput>
             taskSourceIterator = emptyScalaIterator();
         }
 
-        return taskProcessor.process(taskSourceIterator, unmodifiableMap(shuffleInputIterators));
+        return taskProcessor.process(
+                taskSourceIterator,
+                unmodifiableMap(shuffleInputIterators),
+                isNativeExecutionEnabled ? getShuffleReadDescriptor(split, partitions) : ImmutableMap.of(),
+                isNativeExecutionEnabled ? getShuffleWriteDescriptor(split) : ImmutableList.of());
     }
 
     @Override

@@ -222,11 +222,13 @@ public class PrestoSparkStaticQueryExecution
             IPrestoSparkTaskExecutor<PrestoSparkSerializedPage> prestoSparkTaskExecutor = taskExecutorFactory.create(
                     0,
                     0,
+                    0L,
                     serializedTaskDescriptor,
                     emptyScalaIterator(),
-                    new PrestoSparkTaskInputs(ImmutableMap.of(), ImmutableMap.of(), inputs.build()),
+                    new PrestoSparkTaskInputs(ImmutableMap.of(), ImmutableMap.of(), inputs.build(), ImmutableMap.of()),
                     taskInfoCollector,
                     shuffleStatsCollector,
+                    ImmutableList.of(),
                     PrestoSparkSerializedPage.class);
             return collectScalaIterator(prestoSparkTaskExecutor);
         }

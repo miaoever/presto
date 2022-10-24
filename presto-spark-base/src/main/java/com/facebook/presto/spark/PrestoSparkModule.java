@@ -142,6 +142,7 @@ import com.facebook.presto.split.PageSinkManager;
 import com.facebook.presto.split.PageSinkProvider;
 import com.facebook.presto.split.PageSourceManager;
 import com.facebook.presto.split.PageSourceProvider;
+import com.facebook.presto.split.PrestoSparkShuffleSplit;
 import com.facebook.presto.split.SplitManager;
 import com.facebook.presto.sql.Serialization.VariableReferenceExpressionDeserializer;
 import com.facebook.presto.sql.Serialization.VariableReferenceExpressionSerializer;
@@ -261,6 +262,7 @@ public class PrestoSparkModule
         jsonCodecBinder(binder).bindJsonCodec(PrestoSparkQueryData.class);
         jsonCodecBinder(binder).bindListJsonCodec(TaskMemoryReservationSummary.class);
         jsonCodecBinder(binder).bindJsonCodec(TaskUpdateRequest.class);
+        jsonCodecBinder(binder).bindJsonCodec(PrestoSparkShuffleSplit.class);
 
         // smile codecs
         smileCodecBinder(binder).bindSmileCodec(TaskSource.class);
@@ -274,6 +276,7 @@ public class PrestoSparkModule
         else {
             binder.bind(new TypeLiteral<Codec<TaskSource>>() {}).to(new TypeLiteral<JsonCodec<TaskSource>>() {}).in(Scopes.SINGLETON);
             binder.bind(new TypeLiteral<Codec<TaskInfo>>() {}).to(new TypeLiteral<JsonCodec<TaskInfo>>() {}).in(Scopes.SINGLETON);
+            binder.bind(new TypeLiteral<Codec<PrestoSparkShuffleSplit>>() {}).to(new TypeLiteral<JsonCodec<PrestoSparkShuffleSplit>>() {}).in(Scopes.SINGLETON);
         }
 
         // index manager

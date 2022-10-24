@@ -18,6 +18,7 @@ import com.facebook.airlift.json.JsonCodec;
 import com.facebook.airlift.log.Logger;
 import com.facebook.airlift.stats.TestingGcMonitor;
 import com.facebook.presto.Session;
+import com.facebook.presto.SystemSessionProperties;
 import com.facebook.presto.common.block.BlockEncodingManager;
 import com.facebook.presto.common.block.BlockEncodingSerde;
 import com.facebook.presto.common.io.DataOutput;
@@ -57,7 +58,9 @@ import com.facebook.presto.spark.classloader_interface.IPrestoSparkTaskExecutorF
 import com.facebook.presto.spark.classloader_interface.MutablePartitionId;
 import com.facebook.presto.spark.classloader_interface.PrestoSparkMutableRow;
 import com.facebook.presto.spark.classloader_interface.PrestoSparkSerializedPage;
+import com.facebook.presto.spark.classloader_interface.PrestoSparkShuffleReadDescriptor;
 import com.facebook.presto.spark.classloader_interface.PrestoSparkShuffleStats;
+import com.facebook.presto.spark.classloader_interface.PrestoSparkShuffleWriteDescriptor;
 import com.facebook.presto.spark.classloader_interface.PrestoSparkStorageHandle;
 import com.facebook.presto.spark.classloader_interface.PrestoSparkTaskInputs;
 import com.facebook.presto.spark.classloader_interface.PrestoSparkTaskOutput;
@@ -68,6 +71,7 @@ import com.facebook.presto.spark.execution.PrestoSparkPageOutputOperator.PrestoS
 import com.facebook.presto.spark.execution.PrestoSparkRowBatch.RowTupleSupplier;
 import com.facebook.presto.spark.execution.PrestoSparkRowOutputOperator.PreDeterminedPartitionFunction;
 import com.facebook.presto.spark.execution.PrestoSparkRowOutputOperator.PrestoSparkRowOutputFactory;
+import com.facebook.presto.spi.ConnectorId;
 import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.memory.MemoryPoolId;
 import com.facebook.presto.spi.page.PageDataOutput;
@@ -163,6 +167,7 @@ public class PrestoSparkTaskExecutorFactory
         implements IPrestoSparkTaskExecutorFactory
 {
     private static final Logger log = Logger.get(PrestoSparkTaskExecutorFactory.class);
+    public static final ConnectorId NATIVE_EXECUTION_CONNECTOR_ID = new ConnectorId("$$native_execution");
 
     private final SessionPropertyManager sessionPropertyManager;
     private final BlockEncodingManager blockEncodingManager;
@@ -227,6 +232,7 @@ public class PrestoSparkTaskExecutorFactory
             PrestoSparkBroadcastTableCacheManager prestoSparkBroadcastTableCacheManager,
             PrestoSparkConfig prestoSparkConfig,
             BlockEncodingSerde blockEncodingSerde)
+            //ShuffleInfoSerder
     {
         this(
                 sessionPropertyManager,
@@ -321,6 +327,7 @@ public class PrestoSparkTaskExecutorFactory
     public <T extends PrestoSparkTaskOutput> IPrestoSparkTaskExecutor<T> create(
             int partitionId,
             int attemptNumber,
+            long taskAttemptNumber,
             SerializedPrestoSparkTaskDescriptor serializedTaskDescriptor,
             Iterator<SerializedPrestoSparkTaskSource> serializedTaskSources,
             PrestoSparkTaskInputs inputs,
@@ -332,6 +339,7 @@ public class PrestoSparkTaskExecutorFactory
             return doCreate(
                     partitionId,
                     attemptNumber,
+                    taskAttemptNumber,
                     serializedTaskDescriptor,
                     serializedTaskSources,
                     inputs,
@@ -347,6 +355,7 @@ public class PrestoSparkTaskExecutorFactory
     public <T extends PrestoSparkTaskOutput> IPrestoSparkTaskExecutor<T> doCreate(
             int partitionId,
             int attemptNumber,
+            long taskAttemptNumber,
             SerializedPrestoSparkTaskDescriptor serializedTaskDescriptor,
             Iterator<SerializedPrestoSparkTaskSource> serializedTaskSources,
             PrestoSparkTaskInputs inputs,
@@ -494,6 +503,8 @@ public class PrestoSparkTaskExecutorFactory
         ImmutableMap.Builder<PlanNodeId, List<PrestoSparkShuffleInput>> shuffleInputs = ImmutableMap.builder();
         ImmutableMap.Builder<PlanNodeId, List<java.util.Iterator<PrestoSparkSerializedPage>>> pageInputs = ImmutableMap.builder();
         ImmutableMap.Builder<PlanNodeId, List<?>> broadcastInputs = ImmutableMap.builder();
+        ImmutableList.Builder<PrestoSparkShuffleWriteDescriptor> shuffleWriteDescriptors = ImmutableList.builder();
+        ImmutableMap.Builder<PlanNodeId, PrestoSparkShuffleReadDescriptor> shuffleReadDescriptors = ImmutableMap.builder();
         for (RemoteSourceNode remoteSource : fragment.getRemoteSourceNodes()) {
             List<PrestoSparkShuffleInput> remoteSourceRowInputs = new ArrayList<>();
             List<java.util.Iterator<PrestoSparkSerializedPage>> remoteSourcePageInputs = new ArrayList<>();
@@ -502,6 +513,12 @@ public class PrestoSparkTaskExecutorFactory
                 Iterator<Tuple2<MutablePartitionId, PrestoSparkMutableRow>> shuffleInput = inputs.getShuffleInputs().get(sourceFragmentId.toString());
                 Broadcast<?> broadcastInput = inputs.getBroadcastInputs().get(sourceFragmentId.toString());
                 List<PrestoSparkSerializedPage> inMemoryInput = inputs.getInMemoryInputs().get(sourceFragmentId.toString());
+                PrestoSparkShuffleReadDescriptor shuffleReadDescriptor = inputs.getShuffleReadDescriptors().get(sourceFragmentId.toString());
+
+                if (shuffleReadDescriptor != null) {
+                    shuffleReadDescriptors.put(remoteSource.getId(), shuffleReadDescriptor);
+                }
+                shuffleWriteDescriptors.addAll(inputs.getShuffleWriteDescriptors());
 
                 if (shuffleInput != null) {
                     checkArgument(broadcastInput == null, "single remote source is not expected to accept different kind of inputs");
@@ -574,6 +591,7 @@ public class PrestoSparkTaskExecutorFactory
                 getStorageBasedBroadcastJoinWriteBufferSize(session));
         PrestoSparkOutputBuffer<?> outputBuffer = output.getOutputBuffer();
 
+        boolean isNativeExecutionEnabled = SystemSessionProperties.isNativeExecutionEnabled(session);
         LocalExecutionPlan localExecutionPlan = localExecutionPlanner.plan(
                 taskContext,
                 fragment,
@@ -591,7 +609,13 @@ public class PrestoSparkTaskExecutorFactory
                         stageId),
                 taskDescriptor.getTableWriteInfo(),
                 true,
-                ImmutableList.of(new NativeExecutionOperator.NativeExecutionOperatorTranslator(session, fragment, blockEncodingSerde)));
+                ImmutableList.of(new NativeExecutionOperator.NativeExecutionOperatorTranslator(
+                        session,
+                        fragment,
+                        blockEncodingSerde,
+                        isNativeExecutionEnabled ? shuffleReadDescriptors.build() : ImmutableMap.of(),
+                        isNativeExecutionEnabled ? shuffleWriteDescriptors.build() : ImmutableList.of(),
+                        )));
 
         taskStateMachine.addStateChangeListener(state -> {
             if (state.isDone()) {

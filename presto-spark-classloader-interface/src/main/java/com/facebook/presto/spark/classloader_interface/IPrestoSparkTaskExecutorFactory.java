@@ -21,6 +21,7 @@ public interface IPrestoSparkTaskExecutorFactory
     <T extends PrestoSparkTaskOutput> IPrestoSparkTaskExecutor<T> create(
             int partitionId,
             int attemptNumber,
+            long taskAttemptNumber,
             SerializedPrestoSparkTaskDescriptor taskDescriptor,
             Iterator<SerializedPrestoSparkTaskSource> serializedTaskSources,
             PrestoSparkTaskInputs inputs,

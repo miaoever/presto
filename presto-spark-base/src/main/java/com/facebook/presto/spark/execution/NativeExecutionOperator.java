@@ -38,6 +38,7 @@ import com.facebook.presto.sql.planner.plan.NativeExecutionNode;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableSet;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -75,6 +76,7 @@ public class NativeExecutionOperator
     // TODO: will be used to deserialize the  {@link SerializedPage}
     private final PagesSerde serde;
     private TaskSource taskSource;
+    private final List<PrestoSparkLocalShuffleReadInfo> shuffleWriteInfos;
     private boolean finished;
 
     public NativeExecutionOperator(
@@ -82,7 +84,8 @@ public class NativeExecutionOperator
             OperatorContext operatorContext,
             PlanFragment planFragment,
             TableWriteInfo tableWriteInfo,
-            PagesSerde serde)
+            PagesSerde serde,
+            List<PrestoSparkLocalShuffleReadInfo> shuffleWriteInfos)
     {
         this.sourceId = requireNonNull(sourceId, "sourceId is null");
         this.operatorContext = requireNonNull(operatorContext, "operatorContext is null");
@@ -90,6 +93,7 @@ public class NativeExecutionOperator
         this.planFragment = requireNonNull(planFragment, "planFragment is null");
         this.tableWriteInfo = requireNonNull(tableWriteInfo, "tableWriteInfo is null");
         this.serde = requireNonNull(serde, "serde is null");
+        this.shuffleWriteInfos = requireNonNull(shuffleWriteInfos, "shuffleWriteInfos is null");
     }
 
     @Override
@@ -190,6 +194,7 @@ public class NativeExecutionOperator
         private final PlanFragment planFragment;
         private final TableWriteInfo tableWriteInfo;
         private final PagesSerdeFactory serdeFactory;
+        private final List<PrestoSparkLocalShuffleReadInfo> shuffleWriteInfos;
         private boolean closed;
 
         public NativeExecutionOperatorFactory(
@@ -197,13 +202,15 @@ public class NativeExecutionOperator
                 PlanNodeId planNodeId,
                 PlanFragment planFragment,
                 TableWriteInfo tableWriteInfo,
-                PagesSerdeFactory serdeFactory)
+                PagesSerdeFactory serdeFactory,
+                List<PrestoSparkLocalShuffleReadInfo> shuffleWriteInfos)
         {
             this.operatorId = operatorId;
             this.planNodeId = requireNonNull(planNodeId, "planNodeId is null");
             this.planFragment = requireNonNull(planFragment, "planFragment is null");
             this.tableWriteInfo = requireNonNull(tableWriteInfo, "tableWriteInfo is null");
             this.serdeFactory = requireNonNull(serdeFactory, "serdeFactory is null");
+            this.shuffleWriteInfos = requireNonNull(shuffleWriteInfos, "shuffleWriteInfos is null");
         }
 
         @Override
@@ -222,7 +229,8 @@ public class NativeExecutionOperator
                     operatorContext,
                     planFragment,
                     tableWriteInfo,
-                    serdeFactory.createPagesSerde());
+                    serdeFactory.createPagesSerde(),
+                    shuffleWriteInfos);
         }
 
         @Override
@@ -243,12 +251,14 @@ public class NativeExecutionOperator
         private final PlanFragment fragment;
         private final Session session;
         private final BlockEncodingSerde blockEncodingSerde;
+        private final List<PrestoSparkLocalShuffleReadInfo> shuffleWriteInfos;
 
-        public NativeExecutionOperatorTranslator(Session session, PlanFragment fragment, BlockEncodingSerde blockEncodingSerde)
+        public NativeExecutionOperatorTranslator(Session session, PlanFragment fragment, BlockEncodingSerde blockEncodingSerde, List<PrestoSparkLocalShuffleReadInfo> shuffleWriteInfos)
         {
             this.fragment = requireNonNull(fragment, "fragment is null");
             this.session = requireNonNull(session, "session is null");
             this.blockEncodingSerde = requireNonNull(blockEncodingSerde, "blockEncodingSerde is null");
+            this.shuffleWriteInfos = requireNonNull(shuffleWriteInfos, "shuffleWriteInfo is null");
         }
 
         @Override
@@ -260,7 +270,8 @@ public class NativeExecutionOperator
                         node.getId(),
                         fragment.withSubPlan(((NativeExecutionNode) node).getSubPlan()),
                         context.getTableWriteInfo(),
-                        new PagesSerdeFactory(blockEncodingSerde, isExchangeCompressionEnabled(session), isExchangeChecksumEnabled(session)));
+                        new PagesSerdeFactory(blockEncodingSerde, isExchangeCompressionEnabled(session), isExchangeChecksumEnabled(session)),
+                        shuffleWriteInfos);
                 return Optional.of(
                         new LocalExecutionPlanner.PhysicalOperation(operatorFactory, makeLayout(node), context, UNGROUPED_EXECUTION));
             }
