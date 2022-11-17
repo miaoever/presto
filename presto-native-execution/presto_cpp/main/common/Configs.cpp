@@ -49,7 +49,12 @@ std::string SystemConfig::prestoVersion() const {
 }
 
 std::string SystemConfig::discoveryUri() const {
-  return requiredProperty(std::string(kDiscoveryUri));
+  auto opt = optionalProperty<std::string>(std::string(kDiscoveryUri));
+  if (opt.has_value()) {
+    return opt.value();
+  } else {
+    return "http://127.0.0.1";
+  }
 }
 
 int32_t SystemConfig::maxDriversPerTask() const {

@@ -163,6 +163,11 @@ public class PrestoSparkQueryRunner
         return createHivePrestoSparkQueryRunner(getTables());
     }
 
+    public static PrestoSparkQueryRunner createHivePrestoSparkQueryRunner(Map<String, String> additionalConfigProperties)
+    {
+        return createHivePrestoSparkQueryRunner(getTables(), additionalConfigProperties);
+    }
+
     public static PrestoSparkQueryRunner createSpilledHivePrestoSparkQueryRunner(Iterable<TpchTable<?>> tables)
     {
         return createSpilledHivePrestoSparkQueryRunner(tables, ImmutableMap.of());

@@ -36,7 +36,7 @@ public class NativeExecutionConnectorConfig
     {
         ImmutableMap.Builder<String, String> builder = ImmutableMap.builder();
         return builder.put(CACHE_ENABLED, String.valueOf(isCacheEnabled()))
-                .put(CACHE_MAX_CACHE_SIZE, String.valueOf(getMaxCacheSize()))
+                //.put(CACHE_MAX_CACHE_SIZE, String.valueOf(getMaxCacheSize()))
                 .put(CONNECTOR_NAME, getConnectorName())
                 .build();
     }

@@ -47,7 +47,7 @@ public class NativeExecutionSystemConfig
     private int concurrentLifespansPerTask = 5;
     private int maxDriversPerTask = 15;
     private String prestoVersion = "dummy.presto.version";
-    private String discoveryUri = "http://127.0.0.1";
+    private String discoveryUri = "127.0.0.1";
 
     public Map<String, String> getAllProperties()
     {
@@ -63,7 +63,7 @@ public class NativeExecutionSystemConfig
                 .put(SHUTDOWN_ONSET_SEC, String.valueOf(getShutdownOnsetSec()))
                 .put(SYSTEM_MEMORY_GB, String.valueOf(getSystemMemoryGb()))
                 .put(TASK_MAX_DRIVERS_PER_TASK, String.valueOf(getMaxDriversPerTask()))
-                .put(DISCOVERY_URI, getDiscoveryUri())
+//                .put(DISCOVERY_URI, getDiscoveryUri())
                 .build();
     }
 
